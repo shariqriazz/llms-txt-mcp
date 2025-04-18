@@ -111,25 +111,39 @@ export class SynthesizeLlmsFullHandler extends BaseHandler {
 
             const queuedTask = { taskId, args: executionArgs };
 
-            // Use renamed pipeline state functions
+            // Check if the tool AND the browser resource are free
             if (isSynthesizeLlmsFullToolFree()) {
                 if (acquireSynthesizeLlmsFullToolLock()) {
-                    this.safeLog?.('info', `[${taskId}] Acquired synthesize-llms-full tool lock. Starting execution immediately.`);
-                    setTaskStatus(taskId, 'running');
-                    updateTaskDetails(taskId, 'Starting LLM synthesis stage...');
-                    // Call renamed execution method
-                    this._executeSynthesizeLlmsFull(taskId, executionArgs);
-                    taskResponses.push(`Task ${taskId} started for crawl task "${crawlTaskId}".`);
-                    startedCount++;
+                    // Tool lock acquired, now check browser lock
+                    if (PipelineState.isBrowserFree()) {
+                        // Browser is also free, start execution
+                        this.safeLog?.('info', `[${taskId}] Acquired synthesize-llms-full tool lock and browser is free. Starting execution immediately.`);
+                        setTaskStatus(taskId, 'running');
+                        updateTaskDetails(taskId, 'Starting LLM synthesis stage...');
+                        this._executeSynthesizeLlmsFull(taskId, executionArgs); // No await needed, runs in background
+                        taskResponses.push(`Task ${taskId} started for crawl task "${crawlTaskId}".`);
+                        startedCount++;
+                    } else {
+                        // Tool lock acquired, but browser is busy. Release tool lock and queue.
+                        this.safeLog?.('info', `[${taskId}] Acquired synthesize-llms-full tool lock, but browser is busy. Releasing tool lock and queueing.`);
+                        releaseSynthesizeLlmsFullToolLock(); // Release tool lock as we are not starting
+                        const position = enqueueForSynthesizeLlmsFull(queuedTask);
+                        setTaskStatus(taskId, 'queued');
+                        updateTaskDetails(taskId, `Task queued (waiting for browser). Position: ${position}`);
+                        taskResponses.push(`Task ${taskId} queued (Waiting for Browser, Position: ${position}) for crawl task "${crawlTaskId}".`);
+                        queuedCount++;
+                    }
                 } else {
+                    // Failed to acquire tool lock (race condition?), queue the task
                     this.safeLog?.('warning', `[${taskId}] Synthesize-llms-full tool lock acquisition failed (race condition?). Queueing task.`);
-                    const position = enqueueForSynthesizeLlmsFull(queuedTask); // Use renamed function
+                    const position = enqueueForSynthesizeLlmsFull(queuedTask);
                     setTaskStatus(taskId, 'queued');
                     updateTaskDetails(taskId, `Task queued for synthesize-llms-full tool. Position: ${position}`);
                     taskResponses.push(`Task ${taskId} queued (Position: ${position}) for crawl task "${crawlTaskId}".`);
                     queuedCount++;
                 }
             } else {
+                // Tool itself is busy, queue the task
                 const position = enqueueForSynthesizeLlmsFull(queuedTask);
                 setTaskStatus(taskId, 'queued');
                 updateTaskDetails(taskId, `Task queued for synthesize-llms-full tool. Position: ${position}`);
@@ -186,24 +200,45 @@ export class SynthesizeLlmsFullHandler extends BaseHandler {
 
              updateTaskDetails(taskId, `Synthesizing ${discoveredUrls.length} sources for topic: ${originalTopicOrUrl}`);
 
-            // Wrap the core LLM processing in the retry helper
-            // NOTE: processSourcesWithLlm will be updated later for specific config
+            // --- Acquire Browser Lock before starting LLM processing (which includes extraction) ---
+            this.safeLog?.('debug', `[${taskId}] Attempting to acquire browser lock for synthesis stage...`);
+            // This needs a loop or retry mechanism if the lock isn't immediately available
+            // For simplicity now, we'll just try once within the retryAsyncFunction wrapper.
+            // A more robust solution might involve a dedicated waiting mechanism.
+
+            // Wrap the core LLM processing (including lock acquisition attempt) in the retry helper
             finalLlmsContent = await retryAsyncFunction(
-                () => processSourcesWithLlm(
-                    taskId,
-                    discoveredUrls,
-                    originalTopicOrUrl,
-                    max_llm_calls,
-                    this.apiClient,
-                    this.safeLog
-                    // Pass specific LLM config here later
-                ),
+                async () => { // Make the inner function async to use await for lock
+                    // Attempt to acquire lock at the beginning of each retry attempt
+                    if (!PipelineState.acquireBrowserLock()) {
+                        // If lock not acquired, throw error to trigger retry or fail
+                        throw new Error("Could not acquire browser lock for synthesis stage content extraction.");
+                    }
+                    // let browserLockReleased = false; // Not needed here anymore
+                    try {
+                        // Call the original processing function now that lock is acquired
+                        return await processSourcesWithLlm(
+                            taskId,
+                            discoveredUrls,
+                            originalTopicOrUrl,
+                            max_llm_calls,
+                            this.apiClient,
+                            this.safeLog
+                            // Pass specific LLM config here later
+                        );
+                    } finally {
+                        // Ensure lock is released even if processSourcesWithLlm fails
+                        PipelineState.releaseBrowserLock();
+                        // browserLockReleased = true; // Not needed here anymore
+                        this.safeLog?.('debug', `[${taskId}] Released browser lock after synthesis attempt.`);
+                    }
+                }, // End of async function passed to retryAsyncFunction
                 MAX_RETRY_ATTEMPTS,
                 INITIAL_RETRY_DELAY_MS,
                 `LLM Synthesis for ${originalTopicOrUrl} (Task ${taskId})`, // Updated log message
-                this.safeLog,
-                taskId
-            );
+                this.safeLog, // Pass safeLog correctly
+                taskId // Pass taskId correctly
+            ); // End of retryAsyncFunction call
 
             // Check cancellation after successful LLM processing (Logic remains same)
             if (isTaskCancelled(taskId)) {
@@ -255,39 +290,61 @@ export class SynthesizeLlmsFullHandler extends BaseHandler {
             }
         } finally {
             this.safeLog?.('info', `[${taskId}] Synthesize-llms-full execution finished (Succeeded: ${stageSucceeded}).`);
+            // Ensure browser lock is released if it was acquired by this execution attempt
+            PipelineState.releaseBrowserLock();
+            this.safeLog?.('debug', `[${taskId}] Ensured browser lock released in main finally block.`);
+            // Release the tool-specific lock
             releaseSynthesizeLlmsFullToolLock();
             this.safeLog?.('info', `[${taskId}] Released synthesize-llms-full tool lock.`);
             // Trigger queue check (will be updated in pipeline_state)
+            this._checkSynthesizeLlmsFullQueue(); // Explicitly trigger check after releasing lock
         }
     }
 
     // Renamed Queue Checker method
     public _checkSynthesizeLlmsFullQueue(): void {
+        // Check only if the tool itself is free
         this.safeLog?.('debug', `Checking synthesize-llms-full tool queue. Free: ${isSynthesizeLlmsFullToolFree()}, Queue size: ${getSynthesizeLlmsFullQueueLength()}`);
         if (isSynthesizeLlmsFullToolFree() && getSynthesizeLlmsFullQueueLength() > 0) {
+            // Acquire the tool lock
             if (acquireSynthesizeLlmsFullToolLock()) {
-                const nextTask = dequeueForSynthesizeLlmsFull();
-                if (nextTask) {
-                    const taskStatusInfo = getTaskStatus(nextTask.taskId);
-                    if (taskStatusInfo?.status === 'cancelled') {
-                        this.safeLog?.('info', `[${nextTask.taskId}] Skipping dequeued synthesize-llms-full task as it was cancelled.`);
+                // Tool lock acquired, check browser
+                if (PipelineState.isBrowserFree()) {
+                    // Browser is also free, dequeue and execute
+                    const nextTask = dequeueForSynthesizeLlmsFull();
+                    if (nextTask) {
+                        const taskStatusInfo = getTaskStatus(nextTask.taskId);
+                        if (taskStatusInfo?.status === 'cancelled') {
+                            this.safeLog?.('info', `[${nextTask.taskId}] Skipping dequeued synthesize-llms-full task as it was cancelled.`);
+                            releaseSynthesizeLlmsFullToolLock(); // Release lock before recursing
+                            this._checkSynthesizeLlmsFullQueue(); // Check again immediately
+                            return;
+                        }
+                        this.safeLog?.('info', `[${nextTask.taskId}] Dequeuing task for synthesize-llms-full tool (Browser free). Remaining queue size: ${getSynthesizeLlmsFullQueueLength()}`);
+                        setTaskStatus(nextTask.taskId, 'running');
+                        updateTaskDetails(nextTask.taskId, 'Starting LLM synthesis stage from queue...');
+                        this._executeSynthesizeLlmsFull(nextTask.taskId, nextTask.args as ValidatedSingleSynthesizeLlmsFullArgs); // No await
+                    } else {
+                        // Should not happen if queue length > 0, but handle defensively
+                        this.safeLog?.('warning', 'Synthesize-llms-full tool queue was not empty, but dequeue failed. Releasing lock.');
                         releaseSynthesizeLlmsFullToolLock();
-                        this._checkSynthesizeLlmsFullQueue(); // Recurse with new name
-                        return;
                     }
-                    this.safeLog?.('info', `[${nextTask.taskId}] Dequeuing task for synthesize-llms-full tool. Remaining queue size: ${getSynthesizeLlmsFullQueueLength()}`);
-                    setTaskStatus(nextTask.taskId, 'running');
-                    updateTaskDetails(nextTask.taskId, 'Starting LLM synthesis stage from queue...');
-                    this._executeSynthesizeLlmsFull(nextTask.taskId, nextTask.args as ValidatedSingleSynthesizeLlmsFullArgs); // Call renamed method
                 } else {
-                    this.safeLog?.('warning', 'Synthesize-llms-full tool queue was not empty, but dequeue failed. Releasing lock.');
-                    releaseSynthesizeLlmsFullToolLock(); // Use renamed function
+                    // Tool lock acquired, but browser is busy. Release tool lock.
+                    this.safeLog?.('debug', `[Queue Check] Synthesize-llms-full tool lock acquired, but browser is busy. Releasing tool lock. Task remains queued.`);
+                    releaseSynthesizeLlmsFullToolLock();
+                    // Do not dequeue, wait for browser to become free. The check will run again later.
                 }
             } else {
-                this.safeLog?.('debug', 'Synthesize-llms-full tool is free, but failed to acquire lock (race condition?).');
+                // Failed to acquire tool lock (race condition?)
+                this.safeLog?.('debug', '[Queue Check] Synthesize-llms-full tool is free, but failed to acquire lock (race condition?).');
             }
         } else {
-            this.safeLog?.('debug', 'Synthesize-llms-full tool queue is empty or tool is busy.');
+             if (getSynthesizeLlmsFullQueueLength() > 0) {
+                 this.safeLog?.('debug', '[Queue Check] Synthesize-llms-full tool queue has tasks, but tool is busy.');
+             } else {
+                 this.safeLog?.('debug', '[Queue Check] Synthesize-llms-full tool queue is empty.');
+             }
         }
     }
 }

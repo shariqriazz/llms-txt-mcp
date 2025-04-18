@@ -42,6 +42,7 @@
     "zod": "^3.24.1"
   },
   "devDependencies": {
+    "@types/long": "^5.0.0",
     "@types/node": "^20.17.30",
     "@types/uuid": "^10.0.0",
     "typescript": "^5.8.3"

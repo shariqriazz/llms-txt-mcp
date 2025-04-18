@@ -102,14 +102,7 @@ export async function processSourcesWithLlm(
     updateTaskDetails(taskId, `Starting LLM processing stage for ${urlsToProcess.length} sources...`);
     safeLog?.('info', `[${taskId}] Starting LLM stage. Processing up to ${max_llm_calls} sources.`);
 
-    // --- Acquire Browser Lock for Extraction ---
-    if (!acquireBrowserLock()) {
-        safeLog?.('error', `[${taskId}] LLM Stage: Failed to acquire browser lock before starting processing loop.`);
-        throw new Error("Could not acquire browser lock for LLM stage content extraction.");
-    }
-    safeLog?.('debug', `[${taskId}] LLM Stage: Acquired browser lock.`);
-    let browserLockReleased = false;
-    // --- End Acquire Browser Lock ---
+    // Browser lock is now handled by the caller (_executeSynthesizeLlmsFull)
 
     try {
         for (let i = 0; i < urlsToProcess.length; i++) {
@@ -260,10 +253,6 @@ export async function processSourcesWithLlm(
     return finalLlmsContent;
 
     } finally {
-        if (!browserLockReleased) {
-            releaseBrowserLock();
-            browserLockReleased = true;
-            safeLog?.('debug', `[${taskId}] LLM Stage: Released browser lock.`);
-        }
+        // Browser lock is now handled by the caller (_executeSynthesizeLlmsFull)
     }
 }

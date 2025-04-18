@@ -43,7 +43,7 @@ export class CancelTaskHandler extends BaseHandler {
         let alreadyFinishedCount = 0;
         // Get all tasks and filter locally
         const allTasks = getAllTasks();
-        const relevantPrefixes = ['crawl-', 'process-', 'embed-'];
+        const relevantPrefixes = ['crawl-', 'process-', 'embed-', 'synthesize-llms-full-'];
 
         for (const [id, info] of allTasks.entries()) {
             // Check if task ID starts with one of the relevant prefixes
