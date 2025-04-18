@@ -109,11 +109,11 @@ Set these variables directly in your shell, using a `.env` file in the server's 
 
 *   **LLM (for Pipeline Synthesis Stage):**
     *   `PIPELINE_LLM_PROVIDER`: (Optional) Choose `gemini` (default), `ollama`, `openrouter`, or `chutes`.
-    *   `PIPELINE_LLM_MODEL`: (Optional) Specific model name. Defaults depend on provider (e.g., `gemini-2.0-flash`, `llama3.1:8b`, `openai/gpt-3.5-turbo`).
+    *   `PIPELINE_LLM_MODEL`: (Optional) Specific model name. Defaults depend on provider (e.g., `gemini-2.0-flash`, `llama3.1:8b`, `google/gemini-2.5-pro-exp-03-25:free`, `chutesai/Llama-4-Maverick-17B-128E-Instruct-FP8`).
 
 *   **LLM (for Synthesize Answer Tool):**
     *   `SYNTHESIZE_LLM_PROVIDER`: (Optional) Choose `gemini` (default), `ollama`, `openrouter`, or `chutes`.
-    *   `SYNTHESIZE_LLM_MODEL`: (Optional) Specific model name. Defaults depend on provider (e.g., `gemini-2.0-flash`, `llama3.1:8b`, `openai/gpt-3.5-turbo`).
+    *   `SYNTHESIZE_LLM_MODEL`: (Optional) Specific model name. Defaults depend on provider (e.g., `gemini-2.0-flash`, `llama3.1:8b`, `google/gemini-2.5-pro-exp-03-25:free`, `chutesai/Llama-4-Maverick-17B-128E-Instruct-FP8`).
 
 *   **LLM Credentials & Shared Config:**
     *   `GEMINI_API_KEY`: **Required** if *any* LLM provider is `gemini` (or if embedding provider is `google`).

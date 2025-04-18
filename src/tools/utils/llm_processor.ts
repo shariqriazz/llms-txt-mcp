@@ -24,9 +24,9 @@ const CHUTES_BASE_URL = process.env.CHUTES_BASE_URL || "https://llm.chutes.ai/v1
 const PIPELINE_LLM_PROVIDER = process.env.PIPELINE_LLM_PROVIDER?.toLowerCase() || 'gemini'; // Default to gemini
 const PIPELINE_LLM_MODEL = process.env.PIPELINE_LLM_MODEL || // Defaults adjusted slightly
     (PIPELINE_LLM_PROVIDER === 'ollama' ? 'llama3.1:8b' :
-    (PIPELINE_LLM_PROVIDER === 'openrouter' ? 'openai/gpt-3.5-turbo' :
+    (PIPELINE_LLM_PROVIDER === 'openrouter' ? 'google/gemini-2.5-pro-exp-03-25:free' :
     // (PIPELINE_LLM_PROVIDER === 'groq' ? 'llama3-8b-8192' : // Removed Groq default
-    (PIPELINE_LLM_PROVIDER === 'chutes' ? 'gpt-3.5-turbo' : // Chutes default (assuming OpenAI compatibility)
+    (PIPELINE_LLM_PROVIDER === 'chutes' ? 'chutesai/Llama-4-Maverick-17B-128E-Instruct-FP8' : // Chutes default (assuming OpenAI compatibility)
     'gemini-2.0-flash'))); // Gemini default
 
 /**

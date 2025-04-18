@@ -137,9 +137,9 @@ Answer:`;
     const SYNTHESIZE_LLM_PROVIDER = process.env.SYNTHESIZE_LLM_PROVIDER?.toLowerCase() || 'gemini'; // Use SYNTHESIZE_ prefix
     const SYNTHESIZE_LLM_MODEL = process.env.SYNTHESIZE_LLM_MODEL || // Use SYNTHESIZE_ prefix - adjusted defaults
         (SYNTHESIZE_LLM_PROVIDER === 'ollama' ? 'llama3.1:8b' :
-        (SYNTHESIZE_LLM_PROVIDER === 'openrouter' ? 'openai/gpt-3.5-turbo' :
+        (SYNTHESIZE_LLM_PROVIDER === 'openrouter' ? 'google/gemini-2.5-pro-exp-03-25:free' :
         // (SYNTHESIZE_LLM_PROVIDER === 'groq' ? 'llama3-8b-8192' : // Removed Groq
-        (SYNTHESIZE_LLM_PROVIDER === 'chutes' ? 'gpt-3.5-turbo' :
+        (SYNTHESIZE_LLM_PROVIDER === 'chutes' ? 'chutesai/Llama-4-Maverick-17B-128E-Instruct-FP8' :
         'gemini-2.0-flash')));
     const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL; // Shared credential/config
     const OPENROUTER_BASE_URL = process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1"; // Shared credential/config
