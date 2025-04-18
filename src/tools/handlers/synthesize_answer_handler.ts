@@ -129,25 +129,31 @@ Answer:`;
 
   // LLM call logic adapted from llm_processor.ts
   private async _callLLM(prompt: string): Promise<string> {
-    // Read LLM config from environment variables (same as llm_processor)
-    const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-    const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-    const LLM_PROVIDER = process.env.LLM_PROVIDER?.toLowerCase() || 'gemini';
-    const LLM_MODEL = process.env.LLM_MODEL ||
-        (LLM_PROVIDER === 'ollama' ? 'llama3.1:8b' :
-        (LLM_PROVIDER === 'openrouter' ? 'openai/gpt-3.5-turbo' :
-        'gemini-2.0-flash'));
-    const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL;
-    const OPENROUTER_BASE_URL = process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1";
+    // Read LLM config from environment variables (using SYNTHESIZE_ prefixes)
+    const GEMINI_API_KEY = process.env.GEMINI_API_KEY; // Shared credential
+    const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY; // Shared credential
+    // const GROQ_API_KEY = process.env.GROQ_API_KEY; // Removed Groq
+    const CHUTES_API_KEY = process.env.CHUTES_API_KEY; // Shared credential
+    const SYNTHESIZE_LLM_PROVIDER = process.env.SYNTHESIZE_LLM_PROVIDER?.toLowerCase() || 'gemini'; // Use SYNTHESIZE_ prefix
+    const SYNTHESIZE_LLM_MODEL = process.env.SYNTHESIZE_LLM_MODEL || // Use SYNTHESIZE_ prefix - adjusted defaults
+        (SYNTHESIZE_LLM_PROVIDER === 'ollama' ? 'llama3.1:8b' :
+        (SYNTHESIZE_LLM_PROVIDER === 'openrouter' ? 'openai/gpt-3.5-turbo' :
+        // (SYNTHESIZE_LLM_PROVIDER === 'groq' ? 'llama3-8b-8192' : // Removed Groq
+        (SYNTHESIZE_LLM_PROVIDER === 'chutes' ? 'gpt-3.5-turbo' :
+        'gemini-2.0-flash')));
+    const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL; // Shared credential/config
+    const OPENROUTER_BASE_URL = process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1"; // Shared credential/config
+    // const GROQ_BASE_URL = process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1"; // Removed Groq
+    const CHUTES_BASE_URL = process.env.CHUTES_BASE_URL || "https://llm.chutes.ai/v1"; // Shared credential/config
 
     let llmClient: any;
     let generatedAnswer = '';
-    let llmErrorReason = `LLM (${LLM_PROVIDER}) did not return valid content for synthesis.`;
+    let llmErrorReason = `LLM (${SYNTHESIZE_LLM_PROVIDER}) did not return valid content for synthesis.`; // Use SYNTHESIZE_ prefix
 
     try {
-        // Initialize LLM Client based on provider
-        if (LLM_PROVIDER === 'gemini') {
-            if (!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY not set.');
+        // Initialize LLM Client based on SYNTHESIZE_LLM_PROVIDER
+        if (SYNTHESIZE_LLM_PROVIDER === 'gemini') {
+            if (!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY not set for synthesis.');
             const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
             const safetySettings = [ // Consider if these safety settings are appropriate for synthesis
                 { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
@@ -155,8 +161,8 @@ Answer:`;
                 { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
                 { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
             ];
-            llmClient = genAI.getGenerativeModel({ model: LLM_MODEL, safetySettings });
-            this.safeLog?.('info', `Using Gemini provider for synthesis (Model: ${LLM_MODEL})`);
+            llmClient = genAI.getGenerativeModel({ model: SYNTHESIZE_LLM_MODEL, safetySettings }); // Use SYNTHESIZE_ prefix
+            this.safeLog?.('info', `Using Gemini provider for synthesis (Model: ${SYNTHESIZE_LLM_MODEL})`); // Use SYNTHESIZE_ prefix
 
             // Make API Call
             const result = await llmClient.generateContent({
@@ -174,25 +180,31 @@ Answer:`;
             }
             generatedAnswer = response.candidates[0].content.parts[0].text;
 
-        } else if (LLM_PROVIDER === 'ollama') {
+        } else if (SYNTHESIZE_LLM_PROVIDER === 'ollama') { // Use SYNTHESIZE_ prefix
             const ollamaConfig: { host?: string } = {};
             if (OLLAMA_BASE_URL) ollamaConfig.host = OLLAMA_BASE_URL;
             llmClient = new Ollama(ollamaConfig);
-            this.safeLog?.('info', `Using Ollama provider for synthesis (Model: ${LLM_MODEL}, Host: ${OLLAMA_BASE_URL || 'default'})`);
+            this.safeLog?.('info', `Using Ollama provider for synthesis (Model: ${SYNTHESIZE_LLM_MODEL}, Host: ${OLLAMA_BASE_URL || 'default'})`); // Use SYNTHESIZE_ prefix
 
             // Make API Call
-            const result = await llmClient.generate({ model: LLM_MODEL, prompt: prompt, stream: false });
+            const result = await llmClient.generate({ model: SYNTHESIZE_LLM_MODEL, prompt: prompt, stream: false }); // Use SYNTHESIZE_ prefix
             if (!result || !result.response) throw new Error(llmErrorReason);
             generatedAnswer = result.response;
 
-        } else if (LLM_PROVIDER === 'openrouter') {
-            if (!OPENROUTER_API_KEY) throw new Error('OPENROUTER_API_KEY not set.');
+        } else if (SYNTHESIZE_LLM_PROVIDER === 'openrouter') { // Use SYNTHESIZE_ prefix
+            if (!OPENROUTER_API_KEY) throw new Error('OPENROUTER_API_KEY not set for synthesis.');
             llmClient = new OpenAI({ apiKey: OPENROUTER_API_KEY, baseURL: OPENROUTER_BASE_URL });
-            this.safeLog?.('info', `Using OpenRouter provider for synthesis (Model: ${LLM_MODEL}, BaseURL: ${OPENROUTER_BASE_URL})`);
+            this.safeLog?.('info', `Using OpenRouter provider for synthesis (Model: ${SYNTHESIZE_LLM_MODEL}, BaseURL: ${OPENROUTER_BASE_URL})`);
+
+        // Removed Groq block
+        } else if (SYNTHESIZE_LLM_PROVIDER === 'chutes') { // Add Chutes
+            if (!CHUTES_API_KEY) throw new Error('CHUTES_API_KEY not set for synthesis.');
+            llmClient = new OpenAI({ apiKey: CHUTES_API_KEY, baseURL: CHUTES_BASE_URL });
+            this.safeLog?.('info', `Using Chutes provider for synthesis (Model: ${SYNTHESIZE_LLM_MODEL}, BaseURL: ${CHUTES_BASE_URL})`);
 
             // Make API Call
             const result = await llmClient.chat.completions.create({
-                model: LLM_MODEL,
+                model: SYNTHESIZE_LLM_MODEL, // Use SYNTHESIZE_ prefix
                 messages: [{ role: "user", content: prompt }],
             });
             if (!result || !result.choices || result.choices.length === 0 || !result.choices[0].message?.content) {
@@ -202,14 +214,28 @@ Answer:`;
             }
             generatedAnswer = result.choices[0].message.content;
 
+        } else if (SYNTHESIZE_LLM_PROVIDER === 'chutes') { // Handle Chutes like OpenRouter (Removed Groq)
+            this.safeLog?.('debug', `Attempting API call to ${SYNTHESIZE_LLM_PROVIDER} with model ${SYNTHESIZE_LLM_MODEL}`); // Log before call
+            const result = await llmClient.chat.completions.create({
+                model: SYNTHESIZE_LLM_MODEL,
+                messages: [{ role: "user", content: prompt }],
+            }); // Correct closing parenthesis
+            this.safeLog?.('debug', `Received response from ${SYNTHESIZE_LLM_PROVIDER}`); // Log after call
+            if (!result || !result.choices || result.choices.length === 0 || !result.choices[0].message?.content) {
+                const finishReason = result?.choices?.[0]?.finish_reason;
+                if (finishReason && finishReason !== 'stop') llmErrorReason = `${SYNTHESIZE_LLM_PROVIDER} generation finished unexpectedly: ${finishReason}`;
+                throw new Error(llmErrorReason);
+            }
+            generatedAnswer = result.choices[0].message.content;
+
         } else {
-            throw new Error(`Unsupported LLM_PROVIDER for synthesis: ${LLM_PROVIDER}`);
+            throw new Error(`Unsupported SYNTHESIZE_LLM_PROVIDER for synthesis: ${SYNTHESIZE_LLM_PROVIDER}`); // Removed groq from message implicitly
         }
 
         return generatedAnswer.trim();
 
     } catch (llmError: any) {
-        const specificErrorMsg = `LLM Synthesis Error (${LLM_PROVIDER}): ${llmError.message || llmErrorReason}`;
+        const specificErrorMsg = `LLM Synthesis Error (${SYNTHESIZE_LLM_PROVIDER}): ${llmError.message || llmErrorReason}`; // Use SYNTHESIZE_ prefix
         this.safeLog?.('error', specificErrorMsg);
         throw new Error(specificErrorMsg); // Re-throw to be caught by the main handle method
     }

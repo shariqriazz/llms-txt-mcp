@@ -6,9 +6,9 @@ export const pipelineEmitter = new EventEmitter();
 
 // --- Pipeline Stage Status ---
 // --- Tool-Specific Locks ---
-let isCrawlToolBusy: boolean = false;    // Lock for the new 'crawl' tool
-let isProcessToolBusy: boolean = false;  // Lock for the new 'process' tool
-let isEmbedToolBusy: boolean = false;    // Lock for the new 'embed' tool
+let isCrawlToolBusy: boolean = false;    // Lock for the 'crawl' tool
+let isSynthesizeLlmsFullToolBusy: boolean = false; // Renamed lock for the 'synthesize-llms-full' tool
+let isEmbedToolBusy: boolean = false;    // Lock for the 'embed' tool
 
 // --- Resource Locks ---
 let isBrowserBusy: boolean = false;      // Shared browser resource lock
@@ -20,7 +20,7 @@ let isEmbeddingBusy: boolean = false;    // Legacy Embedding stage lock?
 // --- Queues for Waiting Tasks ---
 // --- Tool-Specific Queues ---
 const crawlToolQueue: QueuedPipelineTask[] = [];   // Queue for the 'crawl' tool
-const processToolQueue: QueuedPipelineTask[] = []; // Queue for the 'process' tool
+const synthesizeLlmsFullToolQueue: QueuedPipelineTask[] = []; // Renamed queue for the 'synthesize-llms-full' tool
 const embedToolQueue: QueuedPipelineTask[] = [];   // Queue for the 'embed' tool
 
 // --- Legacy Queues (Potentially remove later) ---
@@ -41,13 +41,13 @@ export function releaseCrawlToolLock(): void {
     triggerNextPipelineSteps(); // Check queues after releasing lock
 }
 
-// Process Tool Lock (New)
-export function isProcessToolFree(): boolean { return !isProcessToolBusy; }
-export function acquireProcessToolLock(): boolean {
-    if (!isProcessToolBusy) { isProcessToolBusy = true; return true; } return false;
+// SynthesizeLlmsFull Tool Lock (Renamed from Process)
+export function isSynthesizeLlmsFullToolFree(): boolean { return !isSynthesizeLlmsFullToolBusy; }
+export function acquireSynthesizeLlmsFullToolLock(): boolean {
+    if (!isSynthesizeLlmsFullToolBusy) { isSynthesizeLlmsFullToolBusy = true; return true; } return false;
 }
-export function releaseProcessToolLock(): void {
-    isProcessToolBusy = false;
+export function releaseSynthesizeLlmsFullToolLock(): void {
+    isSynthesizeLlmsFullToolBusy = false;
     triggerNextPipelineSteps(); // Check queues after releasing lock
 }
 
@@ -119,20 +119,20 @@ export function removeFromCrawlQueue(taskId: string): boolean {
     if (index > -1) { crawlToolQueue.splice(index, 1); return true; } return false;
 }
 
-// Process Tool Queue (New)
-export function enqueueForProcess(task: QueuedPipelineTask): number {
-    processToolQueue.push(task);
-    return processToolQueue.length;
+// SynthesizeLlmsFull Tool Queue (Renamed from Process)
+export function enqueueForSynthesizeLlmsFull(task: QueuedPipelineTask): number {
+    synthesizeLlmsFullToolQueue.push(task);
+    return synthesizeLlmsFullToolQueue.length;
 }
-export function dequeueForProcess(): QueuedPipelineTask | undefined {
-    return processToolQueue.shift();
+export function dequeueForSynthesizeLlmsFull(): QueuedPipelineTask | undefined {
+    return synthesizeLlmsFullToolQueue.shift();
 }
-export function getProcessQueueLength(): number {
-    return processToolQueue.length;
+export function getSynthesizeLlmsFullQueueLength(): number {
+    return synthesizeLlmsFullToolQueue.length;
 }
-export function removeFromProcessQueue(taskId: string): boolean {
-    const index = processToolQueue.findIndex(task => task.taskId === taskId);
-    if (index > -1) { processToolQueue.splice(index, 1); return true; } return false;
+export function removeFromSynthesizeLlmsFullQueue(taskId: string): boolean {
+    const index = synthesizeLlmsFullToolQueue.findIndex(task => task.taskId === taskId);
+    if (index > -1) { synthesizeLlmsFullToolQueue.splice(index, 1); return true; } return false;
 }
 
 // Embed Tool Queue (New)

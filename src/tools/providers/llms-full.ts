@@ -13,7 +13,7 @@ import {
   CleanupTaskStoreHandler,
   // New Task-Based Handlers
   CrawlHandler,
-  ProcessHandler,
+  SynthesizeLlmsFullHandler, // Renamed from ProcessHandler
   EmbedHandler,
   CancelTaskHandler,
   GetTaskStatusHandler,
@@ -90,7 +90,7 @@ interface LlmsFullToolDefinition {
 // Store handler instances for queue checking
 const handlerInstances: {
     crawl?: CrawlHandler;
-    process?: ProcessHandler;
+    synthesizeLlmsFull?: SynthesizeLlmsFullHandler; // Renamed property
     embed?: EmbedHandler;
 } = {};
 
@@ -161,19 +161,20 @@ const llmsFullToolDefinitions: Record<string, LlmsFullToolDefinition> = {
         }),
         handlerClass: CrawlHandler,
     },
-    process: {
-        name: 'llms_full_process',
-        description: 'Starts the LLM processing stage using the output of completed crawl task(s). Accepts an array of crawl_task_ids or request objects. Returns task IDs.',
-        parameters: z.object({
+    synthesize_llms_full: { // Renamed tool key
+        name: 'llms_full_synthesize_llms_full', // Renamed tool name
+        description: 'Starts the LLM synthesis stage using the output of completed crawl task(s). Accepts an array of crawl_task_ids or request objects. Returns task IDs.', // Updated description
+        parameters: z.object({ // Schema remains similar but refers to synthesis
             requests: z.union([
                 z.array(z.string().min(1)).min(1),
                 z.array(z.object({
                     crawl_task_id: z.string().min(1).describe('The task ID of the completed crawl stage.'),
-                    max_llm_calls: z.coerce.number().int().min(1).optional().default(1000).describe('Maximum LLM calls for processing pages (default: 1000).'),
+                    max_llm_calls: z.coerce.number().int().min(1).optional().default(1000).describe('Maximum LLM calls for synthesizing pages (default: 1000).'), // Updated description
+                    // Add specific LLM config overrides here later if needed
                 })).min(1)
             ]).describe('An array of completed crawl_task_ids or an array of objects containing crawl_task_id and optional max_llm_calls.')
         }),
-        handlerClass: ProcessHandler,
+        handlerClass: SynthesizeLlmsFullHandler, // Use renamed handler class
     },
     embed: {
         name: 'llms_full_embed',
@@ -293,16 +294,16 @@ function zodToJsonSchema(zodSchema: z.ZodObject<any>): any {
 
         // Store instances of handlers that have queues
         if (handlerInstance instanceof CrawlHandler) handlerInstances.crawl = handlerInstance;
-        if (handlerInstance instanceof ProcessHandler) handlerInstances.process = handlerInstance;
+        if (handlerInstance instanceof SynthesizeLlmsFullHandler) handlerInstances.synthesizeLlmsFull = handlerInstance; // Use renamed class and property
         if (handlerInstance instanceof EmbedHandler) handlerInstances.embed = handlerInstance;
 
         // --- Attach General Pipeline Listener (only once) ---
-        if (!pipelineListenerAttached && (handlerInstances.crawl || handlerInstances.process || handlerInstances.embed)) {
+        if (!pipelineListenerAttached && (handlerInstances.crawl || handlerInstances.synthesizeLlmsFull || handlerInstances.embed)) { // Use renamed property
             pipelineEmitter.on('checkQueues', () => {
                 safeLog('debug', "[Pipeline Listener] Received 'checkQueues' event. Checking tool queues...");
                 // Call check methods if the handler instance exists
                 handlerInstances.crawl?._checkCrawlQueue();
-                handlerInstances.process?._checkProcessQueue();
+                handlerInstances.synthesizeLlmsFull?._checkSynthesizeLlmsFullQueue(); // Use renamed property and method
                 handlerInstances.embed?._checkEmbedQueue();
             });
             pipelineListenerAttached = true;

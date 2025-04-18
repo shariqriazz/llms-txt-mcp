@@ -12,9 +12,10 @@ export * from './util_extract_urls.js';       // Renamed from extract-urls.js
 export * from './cleanup_task_store.js'; // Keep task cleanup handler
 
 // --- New Task-Based Handlers ---
-export * from './crawl_handler.js';   // New crawl tool handler
-export * from './process_handler.js'; // New process tool handler
-export * from './embed_handler.js';   // New embed tool handler
+export * from './crawl_handler.js';   // Crawl tool handler
+// export * from './process_handler.js'; // Old process tool handler (replaced)
+export * from './synthesize_llms_full_handler.js'; // New synthesize-llms-full tool handler
+export * from './embed_handler.js';   // Embed tool handler
 export * from './cancel_task.js';     // New general task cancellation handler
 export * from './get_task_status.js'; // New general task status handler
 export * from './get_task_details.js';// New general task details handler

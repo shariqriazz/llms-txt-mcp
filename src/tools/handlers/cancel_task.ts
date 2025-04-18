@@ -90,9 +90,9 @@ export class CancelTaskHandler extends BaseHandler {
           if (taskId.startsWith('crawl-')) {
               removed = PipelineState.removeFromCrawlQueue(taskId);
               queueName = 'crawl';
-          } else if (taskId.startsWith('process-')) {
-              removed = PipelineState.removeFromProcessQueue(taskId);
-              queueName = 'process';
+          } else if (taskId.startsWith('synthesize-llms-full-')) { // Use new prefix
+              removed = PipelineState.removeFromSynthesizeLlmsFullQueue(taskId); // Use renamed function
+              queueName = 'synthesize-llms-full'; // Use new name
           } else if (taskId.startsWith('embed-')) {
               removed = PipelineState.removeFromEmbedQueue(taskId);
               queueName = 'embed';

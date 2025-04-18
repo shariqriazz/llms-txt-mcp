@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { getTaskStatus, getAllTasks, TaskInfo } from '../../tasks.js';
 
 // --- Input Schema ---
-const TaskTypeEnum = z.enum(['crawl', 'process', 'embed', 'all']).optional().default('all').describe('Filter tasks by type.');
+const TaskTypeEnum = z.enum(['crawl', 'synthesize-llms-full', 'embed', 'all']).optional().default('all').describe('Filter tasks by type.'); // Renamed 'process'
 const DetailLevelEnum = z.enum(['simple', 'detailed']).optional().default('simple').describe('Level of detail to return.');
 
 const GetTaskStatusInputSchema = z.object({
@@ -88,7 +88,7 @@ export class GetTaskStatusHandler extends BaseHandler {
 
       switch (taskType) {
           case 'crawl': filterPrefix = 'crawl-'; break;
-          case 'process': filterPrefix = 'process-'; break;
+          case 'synthesize-llms-full': filterPrefix = 'synthesize-llms-full-'; break; // Use new type and prefix
           case 'embed': filterPrefix = 'embed-'; break;
           case 'all':
           default: filterPrefix = ''; break;

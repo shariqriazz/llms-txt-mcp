@@ -18,7 +18,7 @@ export class CheckProgressHandler extends BaseHandler {
         const allTasks = getAllTasks();
         const summary: Record<string, ProgressSummary> = {
             crawl: { total: 0, completed: 0, running: 0, queued: 0, failed: 0, cancelled: 0, runningProgressCurrent: 0, runningProgressTotal: 0 },
-            process: { total: 0, completed: 0, running: 0, queued: 0, failed: 0, cancelled: 0, runningProgressCurrent: 0, runningProgressTotal: 0 },
+            'synthesize-llms-full': { total: 0, completed: 0, running: 0, queued: 0, failed: 0, cancelled: 0, runningProgressCurrent: 0, runningProgressTotal: 0 }, // Renamed from process
             embed: { total: 0, completed: 0, running: 0, queued: 0, failed: 0, cancelled: 0, runningProgressCurrent: 0, runningProgressTotal: 0 },
             unknown: { total: 0, completed: 0, running: 0, queued: 0, failed: 0, cancelled: 0, runningProgressCurrent: 0, runningProgressTotal: 0 }
         };
@@ -26,7 +26,7 @@ export class CheckProgressHandler extends BaseHandler {
         for (const [taskId, taskInfo] of allTasks.entries()) {
             let taskType = 'unknown';
             if (taskId.startsWith('crawl-')) taskType = 'crawl';
-            else if (taskId.startsWith('process-')) taskType = 'process';
+            else if (taskId.startsWith('synthesize-llms-full-')) taskType = 'synthesize-llms-full'; // Use new prefix and key
             else if (taskId.startsWith('embed-')) taskType = 'embed';
 
             const typeSummary = summary[taskType];

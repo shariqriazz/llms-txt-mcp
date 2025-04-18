@@ -9,8 +9,8 @@ This Model Context Protocol (MCP) server provides tools for managing and searchi
 *   **Documentation RAG:** Manage and query local documentation indexed in a vector store (Qdrant + OpenAI/Ollama/Google). Includes tools for listing sources/categories, removing sources, resetting the store, and performing vector search (`llms_full_vector_store_*`).
 *   **Task-Based Pipeline:** A multi-stage pipeline for ingesting documentation:
     *   **Crawl (`llms_full_crawl`):** Discovers URLs for a topic (using Tavily) or starts from a given URL/path. Crawls linked pages based on depth/limits.
-    *   **Process (`llms_full_process`):** Takes completed crawl tasks, extracts content from discovered URLs, uses an LLM (Gemini, Ollama, or OpenRouter) to generate structured markdown, and saves intermediate files.
-    *   **Embed (`llms_full_embed`):** Takes completed process tasks, reads the generated markdown, chunks/embeds the content using the configured embedding provider, and indexes it into the Qdrant vector store.
+    *   **Synthesize-LLMS-Full (`llms_full_synthesize_llms_full`):** Takes completed crawl tasks, extracts content from discovered URLs, uses a configured LLM (Gemini, Ollama, or OpenRouter) to generate structured markdown summaries, and saves intermediate files. (Formerly 'process')
+    *   **Embed (`llms_full_embed`):** Takes completed synthesize-llms-full tasks, reads the generated markdown, chunks/embeds the content using the configured embedding provider, and indexes it into the Qdrant vector store.
 *   **Task Management:** Tools to monitor and manage pipeline tasks (`llms_full_get_task_status`, `llms_full_get_task_details`, `llms_full_cancel_task`, `llms_full_check_progress`, `llms_full_cleanup_task_store`).
 *   **Concurrency Control:** Uses locks and queues to manage concurrent execution of pipeline stages and shared resources (like the browser).
 *   **Robust & Configurable:** Includes API key/config management via environment variables and clear logging. Schema descriptions have been improved for better tool clarity.
@@ -35,14 +35,14 @@ This server provides the following tools:
 
 *   **Pipeline Tools:**
     *   `llms_full_crawl`: Starts the crawling/discovery stage for one or more topics/URLs. Accepts an array of requests (topic/URL, category, crawl_depth, max_urls). Returns task IDs.
-    *   `llms_full_process`: Starts the LLM processing stage using the output of completed crawl task(s). Accepts an array of crawl_task_ids or objects specifying `crawl_task_id` and `max_llm_calls`. Returns task IDs.
-    *   `llms_full_embed`: Starts the embedding/indexing stage using the output of completed process task(s). Accepts an array of process_task_ids. Returns task IDs.
+    *   `llms_full_synthesize_llms_full`: Starts the LLM synthesis stage using the output of completed crawl task(s). Accepts an array of crawl_task_ids or objects specifying `crawl_task_id` and `max_llm_calls`. Returns task IDs. (Formerly `llms_full_process`)
+    *   `llms_full_embed`: Starts the embedding/indexing stage using the output of completed synthesize-llms-full task(s). Accepts an array of synthesize_llms_full_task_ids. Returns task IDs.
 
 *   **Task Management Tools:**
-    *   `llms_full_get_task_status`: Get the status of a specific task (crawl, process, embed) using `taskId`, or list tasks filtered by `taskType` ('crawl', 'process', 'embed', 'all'). Control output detail with `detail_level` ('simple', 'detailed'). Includes ETA estimation for running tasks with progress.
-    *   `llms_full_get_task_details`: Get the detailed output/result string for a specific task ID (e.g., path to discovered URLs file, path to processed content file, error messages).
-    *   `llms_full_cancel_task`: Attempts to cancel running/queued task(s). Provide EITHER a specific `taskId` OR set `all: true` to cancel all active crawl/process/embed tasks.
-    *   `llms_full_check_progress`: Provides a summary report of crawl, process, and embed tasks, categorized by status (completed, running, queued, failed, cancelled) and showing aggregated progress (X/Y) for running tasks.
+    *   `llms_full_get_task_status`: Get the status of a specific task (crawl, synthesize-llms-full, embed) using `taskId`, or list tasks filtered by `taskType` ('crawl', 'synthesize-llms-full', 'embed', 'all'). Control output detail with `detail_level` ('simple', 'detailed'). Includes ETA estimation for running tasks with progress.
+    *   `llms_full_get_task_details`: Get the detailed output/result string for a specific task ID (e.g., path to discovered URLs file, path to synthesized content file, error messages).
+    *   `llms_full_cancel_task`: Attempts to cancel running/queued task(s). Provide EITHER a specific `taskId` OR set `all: true` to cancel all active crawl/synthesize-llms-full/embed tasks.
+    *   `llms_full_check_progress`: Provides a summary report of crawl, synthesize-llms-full, and embed tasks, categorized by status (completed, running, queued, failed, cancelled) and showing aggregated progress (X/Y) for running tasks.
     *   `llms_full_cleanup_task_store`: Removes completed, failed, and cancelled tasks from the internal task list.
 
 *   **Utilities:**
@@ -106,13 +106,21 @@ Set these variables directly in your shell, using a `.env` file in the server's 
 *   **Tavily (for Web Search & Crawl Discovery):**
     *   `TAVILY_API_KEY`: Your Tavily API key. **Required** for `tavily_search`, `tavily_extract`, and topic discovery in `llms_full_crawl`.
 
-*   **LLM (for Process Stage & Synthesis):**
-    *   `LLM_PROVIDER`: (Optional) Choose `gemini` (default), `ollama`, or `openrouter`.
-    *   `LLM_MODEL`: (Optional) Specific model name. Defaults depend on provider (`gemini-2.0-flash`, `llama3.1:8b`, `openai/gpt-3.5-turbo`).
-    *   `GEMINI_API_KEY`: **Required** if `LLM_PROVIDER` is `gemini` (or if embedding provider is `google`).
-    *   `OLLAMA_BASE_URL`: (Optional) Base URL for Ollama if not default and `LLM_PROVIDER` is `ollama`.
-    *   `OPENROUTER_API_KEY`: **Required** if `LLM_PROVIDER` is `openrouter`.
-    *   `OPENROUTER_BASE_URL`: (Optional) Base URL for OpenRouter API (defaults to `https://openrouter.ai/api/v1`).
+*   **LLM (for Pipeline Synthesis Stage):**
+    *   `PIPELINE_LLM_PROVIDER`: (Optional) Choose `gemini` (default), `ollama`, `openrouter`, or `chutes`.
+    *   `PIPELINE_LLM_MODEL`: (Optional) Specific model name. Defaults depend on provider (e.g., `gemini-2.0-flash`, `llama3.1:8b`, `openai/gpt-3.5-turbo`).
+
+*   **LLM (for Synthesize Answer Tool):**
+    *   `SYNTHESIZE_LLM_PROVIDER`: (Optional) Choose `gemini` (default), `ollama`, `openrouter`, or `chutes`.
+    *   `SYNTHESIZE_LLM_MODEL`: (Optional) Specific model name. Defaults depend on provider (e.g., `gemini-2.0-flash`, `llama3.1:8b`, `openai/gpt-3.5-turbo`).
+
+*   **LLM Credentials & Shared Config:**
+    *   `GEMINI_API_KEY`: **Required** if *any* LLM provider is `gemini` (or if embedding provider is `google`).
+    *   `OPENROUTER_API_KEY`: **Required** if *any* LLM provider is `openrouter`.
+    *   `CHUTES_API_KEY`: **Required** if *any* LLM provider is `chutes`.
+    *   `OLLAMA_BASE_URL`: (Optional) Base URL for Ollama if *any* LLM provider is `ollama` and it's not default.
+    *   `OPENROUTER_BASE_URL`: (Optional) Base URL for OpenRouter API if not default and *any* LLM provider is `openrouter`.
+    *   `CHUTES_BASE_URL`: (Optional) Base URL for Chutes API (defaults to `https://llm.chutes.ai/v1`).
 
 *   **Embeddings (for Embed Stage & RAG):**
     *   `EMBEDDING_PROVIDER`: Choose `openai`, `ollama`, or `google`. **Required for llms-full.**
@@ -147,11 +155,15 @@ Add/modify the entry in your client's MCP configuration file:
         "OLLAMA_MODEL": "nomic-embed-text", // Needed if Embedding provider is ollama
         // "OPENAI_API_KEY": "YOUR_OPENAI_KEY", // Needed if Embedding provider is openai
         // --- Optional ---
-        "LLM_PROVIDER": "gemini", // Default: gemini (options: ollama, openrouter)
-        "LLM_MODEL": "gemini-2.0-flash", // Default depends on LLM_PROVIDER
+        "PIPELINE_LLM_PROVIDER": "gemini", // Default: gemini (options: ollama, openrouter, chutes)
+        "PIPELINE_LLM_MODEL": "gemini-2.0-flash", // Default depends on PIPELINE_LLM_PROVIDER
+        "SYNTHESIZE_LLM_PROVIDER": "gemini", // Default: gemini (options: ollama, openrouter, chutes)
+        "SYNTHESIZE_LLM_MODEL": "gemini-2.0-flash", // Default depends on SYNTHESIZE_LLM_PROVIDER
         // "OLLAMA_BASE_URL": "http://localhost:11434",
-        // "OPENROUTER_API_KEY": "YOUR_OPENROUTER_KEY", // Needed if LLM_PROVIDER is openrouter
+        // "OPENROUTER_API_KEY": "YOUR_OPENROUTER_KEY", // Needed if *any* LLM provider is openrouter
+        // "CHUTES_API_KEY": "YOUR_CHUTES_KEY", // Needed if *any* LLM provider is chutes
         // "OPENROUTER_BASE_URL": "https://openrouter.ai/api/v1",
+        // "CHUTES_BASE_URL": "https://llm.chutes.ai/v1",
         // "QDRANT_API_KEY": "YOUR_QDRANT_KEY",
         // "OPENAI_BASE_URL": "https://api.together.xyz/v1",
         // "EMBEDDING_MODEL": "models/embedding-001", // Default depends on EMBEDDING_PROVIDER
@@ -168,11 +180,11 @@ Add/modify the entry in your client's MCP configuration file:
 
 *   "Use `tavily_search` to find recent news about vector databases."
 *   "Start crawling documentation for 'shadcn ui' under category 'shadcn' using `llms_full_crawl`." (Note the task ID)
-*   "Start processing the completed crawl task 'crawl-xxxxxxxx-...' using `llms_full_process`." (Note the task ID)
-*   "Start embedding the completed process task 'process-xxxxxxxx-...' using `llms_full_embed`." (Note the task ID)
+*   "Start synthesizing the completed crawl task 'crawl-xxxxxxxx-...' using `llms_full_synthesize_llms_full`." (Note the task ID)
+*   "Start embedding the completed synthesis task 'synthesize-llms-full-xxxxxxxx-...' using `llms_full_embed`." (Note the task ID)
 *   "Check the overall progress of tasks using `llms_full_check_progress`."
-*   "Get the status for task 'process-xxxxxxxx-...' using `llms_full_get_task_status`."
-*   "Get the detailed results file path for completed task 'process-xxxxxxxx-...' using `llms_full_get_task_details`."
+*   "Get the status for task 'synthesize-llms-full-xxxxxxxx-...' using `llms_full_get_task_status`."
+*   "Get the detailed results file path for completed task 'synthesize-llms-full-xxxxxxxx-...' using `llms_full_get_task_details`."
 *   "Cancel task 'crawl-xxxxxxxx-...' using `llms_full_cancel_task`."
 *   "Cancel all active pipeline tasks using `llms_full_cancel_task` with `all: true`."
 *   "Clean up finished tasks from the store using `llms_full_cleanup_task_store`."
