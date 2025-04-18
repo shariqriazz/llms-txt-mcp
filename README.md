@@ -9,11 +9,11 @@ This Model Context Protocol (MCP) server provides tools for managing and searchi
 *   **Documentation RAG:** Manage and query local documentation indexed in a vector store (Qdrant + OpenAI/Ollama/Google). Includes tools for listing sources/categories, removing sources, resetting the store, and performing vector search (`llms_full_vector_store_*`).
 *   **Task-Based Pipeline:** A multi-stage pipeline for ingesting documentation:
     *   **Crawl (`llms_full_crawl`):** Discovers URLs for a topic (using Tavily) or starts from a given URL/path. Crawls linked pages based on depth/limits.
-    *   **Process (`llms_full_process`):** Takes completed crawl tasks, extracts content from discovered URLs, uses an LLM (Gemini or Ollama) to generate structured markdown, and saves intermediate files.
+    *   **Process (`llms_full_process`):** Takes completed crawl tasks, extracts content from discovered URLs, uses an LLM (Gemini, Ollama, or OpenRouter) to generate structured markdown, and saves intermediate files.
     *   **Embed (`llms_full_embed`):** Takes completed process tasks, reads the generated markdown, chunks/embeds the content using the configured embedding provider, and indexes it into the Qdrant vector store.
 *   **Task Management:** Tools to monitor and manage pipeline tasks (`llms_full_get_task_status`, `llms_full_get_task_details`, `llms_full_cancel_task`, `llms_full_check_progress`, `llms_full_cleanup_task_store`).
 *   **Concurrency Control:** Uses locks and queues to manage concurrent execution of pipeline stages and shared resources (like the browser).
-*   **Robust & Configurable:** Includes API key/config management via environment variables and clear logging.
+*   **Robust & Configurable:** Includes API key/config management via environment variables and clear logging. Schema descriptions have been improved for better tool clarity.
 
 ## Available Tools
 
@@ -47,6 +47,7 @@ This server provides the following tools:
 
 *   **Utilities:**
     *   `llms_full_util_extract_urls`: Utility to extract same-origin URLs from a webpage. Can find shallower links (controlled by `maxDepth`) and optionally add results to a processing queue file (`add_to_queue: true`).
+    *   `llms_full_synthesize_answer_from_docs`: Searches the vector store for context related to a query and uses an LLM to synthesize an answer based on the results.
 
 *(Refer to the input schema definitions within the source code or use an MCP inspector tool for detailed parameters for each tool.)*
 
@@ -105,11 +106,13 @@ Set these variables directly in your shell, using a `.env` file in the server's 
 *   **Tavily (for Web Search & Crawl Discovery):**
     *   `TAVILY_API_KEY`: Your Tavily API key. **Required** for `tavily_search`, `tavily_extract`, and topic discovery in `llms_full_crawl`.
 
-*   **LLM (for Process Stage):**
-    *   `LLM_PROVIDER`: (Optional) Choose `gemini` (default) or `ollama`.
-    *   `LLM_MODEL`: (Optional) Specific model name. Defaults to `gemini-2.0-flash` for `gemini`, or `llama3.1:8b` for `ollama`.
-    *   `GEMINI_API_KEY`: **Required** if `LLM_PROVIDER` is `gemini`.
+*   **LLM (for Process Stage & Synthesis):**
+    *   `LLM_PROVIDER`: (Optional) Choose `gemini` (default), `ollama`, or `openrouter`.
+    *   `LLM_MODEL`: (Optional) Specific model name. Defaults depend on provider (`gemini-2.0-flash`, `llama3.1:8b`, `openai/gpt-3.5-turbo`).
+    *   `GEMINI_API_KEY`: **Required** if `LLM_PROVIDER` is `gemini` (or if embedding provider is `google`).
     *   `OLLAMA_BASE_URL`: (Optional) Base URL for Ollama if not default and `LLM_PROVIDER` is `ollama`.
+    *   `OPENROUTER_API_KEY`: **Required** if `LLM_PROVIDER` is `openrouter`.
+    *   `OPENROUTER_BASE_URL`: (Optional) Base URL for OpenRouter API (defaults to `https://openrouter.ai/api/v1`).
 
 *   **Embeddings (for Embed Stage & RAG):**
     *   `EMBEDDING_PROVIDER`: Choose `openai`, `ollama`, or `google`. **Required for llms-full.**
@@ -144,9 +147,11 @@ Add/modify the entry in your client's MCP configuration file:
         "OLLAMA_MODEL": "nomic-embed-text", // Needed if Embedding provider is ollama
         // "OPENAI_API_KEY": "YOUR_OPENAI_KEY", // Needed if Embedding provider is openai
         // --- Optional ---
-        "LLM_PROVIDER": "gemini", // Default: gemini
+        "LLM_PROVIDER": "gemini", // Default: gemini (options: ollama, openrouter)
         "LLM_MODEL": "gemini-2.0-flash", // Default depends on LLM_PROVIDER
         // "OLLAMA_BASE_URL": "http://localhost:11434",
+        // "OPENROUTER_API_KEY": "YOUR_OPENROUTER_KEY", // Needed if LLM_PROVIDER is openrouter
+        // "OPENROUTER_BASE_URL": "https://openrouter.ai/api/v1",
         // "QDRANT_API_KEY": "YOUR_QDRANT_KEY",
         // "OPENAI_BASE_URL": "https://api.together.xyz/v1",
         // "EMBEDDING_MODEL": "models/embedding-001", // Default depends on EMBEDDING_PROVIDER
@@ -173,6 +178,7 @@ Add/modify the entry in your client's MCP configuration file:
 *   "Clean up finished tasks from the store using `llms_full_cleanup_task_store`."
 *   "List documentation categories using `llms_full_vector_store_list_categories`."
 *   "Search the documentation for 'state management' in the 'react' category using `llms_full_vector_store_search`."
+*   "Ask 'how to integrate shadcn buttons with react-hook-form' using `llms_full_synthesize_answer_from_docs`."
 *   "Reset the documentation vector store using `llms_full_vector_store_reset`."
 
 ## Development

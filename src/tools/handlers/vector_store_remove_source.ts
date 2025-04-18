@@ -1,23 +1,28 @@
 import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import { BaseHandler } from './base-handler.js';
 import { McpToolResponse } from '../types.js';
+import { z } from 'zod'; // Import Zod
 
 const COLLECTION_NAME = 'documentation';
 
+// Define Zod schema for input validation
+const RemoveSourceInputSchema = z.object({
+  urls: z.array(z.string().min(1)).min(1).describe('Array of source URLs/paths to remove (must match exactly the indexed source string).'),
+});
+
 export class VectorStoreRemoveSourceHandler extends BaseHandler {
   async handle(args: any): Promise<McpToolResponse> {
-    if (!args.urls || !Array.isArray(args.urls) || args.urls.length === 0) {
-      throw new McpError(ErrorCode.InvalidParams, 'urls must be a non-empty array');
+    const validationResult = RemoveSourceInputSchema.safeParse(args);
+    if (!validationResult.success) {
+      const errorMessage = validationResult.error.errors.map(e => e.message).join(', ');
+      throw new McpError(ErrorCode.InvalidParams, `Invalid input: ${errorMessage}`);
     }
-
-    if (!args.urls.every((url: string) => typeof url === 'string')) {
-      throw new McpError(ErrorCode.InvalidParams, 'All URLs must be strings');
-    }
+    const { urls } = validationResult.data; // Use validated data
 
     try {
       const result = await this.apiClient.qdrantClient.delete(COLLECTION_NAME, {
         filter: {
-          should: args.urls.map((url: string) => ({
+          should: urls.map((url: string) => ({ // Use validated urls
             key: 'source',
             match: { value: url }
           }))
@@ -33,7 +38,7 @@ export class VectorStoreRemoveSourceHandler extends BaseHandler {
         content: [
           {
             type: 'text',
-            text: `Successfully removed documentation from ${args.urls.length} source${args.urls.length > 1 ? 's' : ''}: ${args.urls.join(', ')}`,
+            text: `Successfully removed documentation from ${urls.length} source${urls.length > 1 ? 's' : ''}: ${urls.join(', ')}`, // Use validated urls
           },
         ],
       };

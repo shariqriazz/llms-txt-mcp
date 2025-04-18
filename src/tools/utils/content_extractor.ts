@@ -66,11 +66,11 @@ export async function extractTextContent(
         throw new Error("Browser instance could not be initialized.");
       }
 
-      // Acquire browser lock specifically for this scraping operation
-      if (!PipelineState.acquireBrowserLock()) {
-          safeLog?.('warning', `Failed to acquire browser lock for ${sourceUrlOrPath}. Retrying might be needed.`);
-          throw new Error("Could not acquire browser lock for URL content extraction.");
-      }
+      // Lock acquisition is now handled by the caller (e.g., llm_processor)
+      // if (!PipelineState.acquireBrowserLock()) {
+      //     safeLog?.('warning', `Failed to acquire browser lock for ${sourceUrlOrPath}. Retrying might be needed.`);
+      //     throw new Error("Could not acquire browser lock for URL content extraction.");
+      // }
 
       const page = await browser.newPage();
       try {
@@ -82,8 +82,9 @@ export async function extractTextContent(
         extractedText = extractedText.replace(/\s\s+/g, ' ').trim();
       } finally {
         await page.close();
-        PipelineState.releaseBrowserLock(); // Release browser lock after scraping
-        safeLog?.('debug', `Released browser lock after scraping ${sourceUrlOrPath}`);
+        // Lock release is now handled by the caller
+        // PipelineState.releaseBrowserLock(); // Release browser lock after scraping
+        // safeLog?.('debug', `Released browser lock after scraping ${sourceUrlOrPath}`);
       }
     }
 

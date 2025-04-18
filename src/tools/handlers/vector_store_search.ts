@@ -7,11 +7,11 @@ import { Schemas } from '@qdrant/js-client-rest'; // Import Qdrant Schemas
 const COLLECTION_NAME = 'documentation';
 
 const SearchDocumentationInputSchema = z.object({
-  query: z.string().min(1, { message: 'Query is required.' }),
-  limit: z.coerce.number().int().min(1).max(20).optional().default(5),
-  url_pattern: z.string().optional(),
-  score_threshold: z.coerce.number().min(0.0).max(1.0).optional().default(0.55),
-  category: z.string().or(z.array(z.string())).optional(),
+  query: z.string().min(1, { message: 'Query is required.' }).describe('The text to search for in the documentation.'),
+  limit: z.coerce.number().int().min(1).max(20).optional().default(5).describe('Maximum number of results to return (1-20, default 5).'),
+  url_pattern: z.string().optional().describe('Optional wildcard pattern (`*`) to filter results by source URL/path.'),
+  score_threshold: z.coerce.number().min(0.0).max(1.0).optional().default(0.55).describe('Minimum similarity score (0.0-1.0) for results. Default 0.55.'),
+  category: z.string().or(z.array(z.string())).optional().describe('Optional category name or array of names to filter search results.'),
 });
 
 function wildcardMatch(pattern: string, text: string): boolean {
@@ -23,6 +23,8 @@ function wildcardMatch(pattern: string, text: string): boolean {
     const regex = new RegExp(`^${regexPattern}$`);
     return regex.test(text);
   } catch (e) {
+    // Use safeLog if available (needs to be passed or accessed if made a class method)
+    // For now, keeping console.error but noting it could be improved if safeLog was accessible here.
     console.error(`Invalid regex from pattern: ${pattern}`, e);
     return false;
   }
@@ -77,9 +79,11 @@ export class VectorStoreSearchHandler extends BaseHandler {
 
       let searchResults = await this.apiClient.qdrantClient.search(COLLECTION_NAME, searchParams);
 
+      // Note: url_pattern filtering happens *after* retrieving the initial 'limit' results from Qdrant.
+      // This means the final number of results might be less than the specified limit.
       if (url_pattern && url_pattern.trim() !== '') {
         const trimmedPattern = url_pattern.trim();
-        this.safeLog?.('debug', `Filtering search results with URL pattern: ${trimmedPattern}`);
+        this.safeLog?.('debug', `Filtering search results post-retrieval with URL pattern: ${trimmedPattern}`);
         searchResults = searchResults.filter(result => {
           if (isDocumentPayload(result.payload) && result.payload.source) {
             return wildcardMatch(trimmedPattern, result.payload.source);

@@ -1,5 +1,6 @@
 import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
 import { Ollama } from 'ollama'; // Import Ollama
+import OpenAI from 'openai'; // Import OpenAI for OpenRouter
 import { ApiClient } from '../api-client.js';
 import { extractTextContent as extractContentUtil } from './content_extractor.js'; // Import extractor util
 import { isTaskCancelled, updateTaskDetails } from '../../tasks.js';
@@ -10,9 +11,14 @@ type LogFunction = (level: 'error' | 'debug' | 'info' | 'notice' | 'warning' | '
 
 // Configuration from Environment Variables
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const LLM_PROVIDER = process.env.LLM_PROVIDER?.toLowerCase() || 'gemini'; // Default to gemini
-const LLM_MODEL = process.env.LLM_MODEL || (LLM_PROVIDER === 'ollama' ? 'llama3.1:8b' : 'gemini-2.0-flash'); // Default model based on provider
+const LLM_MODEL = process.env.LLM_MODEL ||
+    (LLM_PROVIDER === 'ollama' ? 'llama3.1:8b' :
+    (LLM_PROVIDER === 'openrouter' ? 'openai/gpt-3.5-turbo' : // Default OpenRouter model
+    'gemini-2.0-flash')); // Default Gemini model
 const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL; // Optional: e.g., http://host.docker.internal:11434
+const OPENROUTER_BASE_URL = process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1"; // Default OpenRouter API endpoint
 
 /**
  * Processes a list of URLs/paths using an LLM to generate guide content.
@@ -55,13 +61,23 @@ export async function processSourcesWithLlm(
         }
         llmClient = new Ollama(ollamaConfig);
         safeLog?.('info', `[${taskId}] Using Ollama provider with model ${LLM_MODEL} at ${OLLAMA_BASE_URL || 'default'}`);
+    } else if (LLM_PROVIDER === 'openrouter') {
+        if (!OPENROUTER_API_KEY) {
+            throw new McpError(ErrorCode.InvalidRequest, 'LLM_PROVIDER is "openrouter" but OPENROUTER_API_KEY environment variable is not set.');
+        }
+        llmClient = new OpenAI({
+            apiKey: OPENROUTER_API_KEY,
+            baseURL: OPENROUTER_BASE_URL,
+        });
+        safeLog?.('info', `[${taskId}] Using OpenRouter provider with model ${LLM_MODEL} at ${OPENROUTER_BASE_URL}`);
     } else {
-        throw new McpError(ErrorCode.InvalidRequest, `Unsupported LLM_PROVIDER: ${LLM_PROVIDER}. Must be 'gemini' or 'ollama'.`);
+        throw new McpError(ErrorCode.InvalidRequest, `Unsupported LLM_PROVIDER: ${LLM_PROVIDER}. Must be 'gemini', 'ollama', or 'openrouter'.`);
     }
 
     let finalLlmsContent = `# LLMS Full Content for ${topic} (Provider: ${LLM_PROVIDER}, Model: ${LLM_MODEL})\n\n`;
     let llmErrors = 0;
     let processedCount = 0;
+    let firstErrorMessage: string | null = null; // Store the first critical error
 
     updateTaskDetails(taskId, `Starting LLM processing stage for ${urlsToProcess.length} sources...`);
     safeLog?.('info', `[${taskId}] Starting LLM stage. Processing up to ${max_llm_calls} sources.`);
@@ -143,32 +159,68 @@ export async function processSourcesWithLlm(
                         throw new Error(llmErrorReason);
                     }
                     generatedSection = result.response;
+                } else if (LLM_PROVIDER === 'openrouter') {
+                    const result = await llmClient.chat.completions.create({
+                        model: LLM_MODEL,
+                        messages: [{ role: "user", content: prompt }],
+                        // Add other parameters like temperature, max_tokens if needed
+                    });
+                    processedCount++;
+
+                    if (!result || !result.choices || result.choices.length === 0 || !result.choices[0].message?.content) {
+                        const finishReason = result?.choices?.[0]?.finish_reason;
+                        if (finishReason && finishReason !== 'stop') {
+                            llmErrorReason = `OpenRouter generation finished unexpectedly: ${finishReason}`;
+                        }
+                        throw new Error(llmErrorReason);
+                    }
+                    generatedSection = result.choices[0].message.content;
                 }
 
                 finalLlmsContent += `\n\n--- Source: ${itemPathOrUrl} ---\n\n${generatedSection}`;
                 safeLog?.('debug', `[${taskId}] LLM Stage: Successfully generated section from ${itemPathOrUrl} using ${LLM_PROVIDER}.`);
 
             } catch (llmError: any) {
-                // Catch errors from either Gemini or Ollama calls
-                const specificErrorMsg = `LLM Error on ${itemPathOrUrl}: ${llmError.message || llmErrorReason}`;
+                // Catch errors from Gemini, Ollama, or OpenRouter calls
+                let specificErrorMsg = `LLM Error on ${itemPathOrUrl}: ${llmError.message || llmErrorReason}`;
+                // Add more detail for OpenRouter errors if possible
+                if (LLM_PROVIDER === 'openrouter' && llmError instanceof Error) {
+                    // Attempt to log the raw error object which might contain more details from the API
+                    try {
+                        const rawErrorString = JSON.stringify(llmError, Object.getOwnPropertyNames(llmError));
+                        specificErrorMsg += ` | Raw Error: ${rawErrorString}`;
+                    } catch (e) {
+                        specificErrorMsg += ` | Could not stringify raw error object.`;
+                    }
+                }
                 safeLog?.('error', `[${taskId}] LLM Stage: ${specificErrorMsg}`);
-                // Update task details with the specific LLM error
+                // Update task details and store the first error
                 updateTaskDetails(taskId, specificErrorMsg);
+                if (!firstErrorMessage) {
+                    firstErrorMessage = specificErrorMsg;
+                }
                 llmErrors++;
-                continue;
+                continue; // Continue to try other sources
             }
 
         } catch (extractionOrOtherError: any) {
             const specificErrorMsg = `Error processing ${itemPathOrUrl}: ${extractionOrOtherError.message}`;
             safeLog?.('error', `[${taskId}] LLM Stage: ${specificErrorMsg}`);
             updateTaskDetails(taskId, specificErrorMsg);
+            // Store the first error
+            if (!firstErrorMessage) {
+                firstErrorMessage = specificErrorMsg;
+            }
             llmErrors++;
+            // No need to continue here, the loop naturally proceeds
         }
     }
 
     updateTaskDetails(taskId, `LLM stage finished. Processed ${processedCount} sources with ${llmErrors} errors.`);
+    // If no sources were processed and we captured a specific error, throw that one. Otherwise, throw the generic error.
     if (!isTaskCancelled(taskId) && processedCount === 0 && urlsToProcess.length > 0) {
-        throw new Error(`LLM Stage: Failed to process or generate content for any sources.`);
+        const finalErrorMsg = firstErrorMessage || `LLM Stage: Failed to process or generate content for any sources.`;
+        throw new Error(finalErrorMsg);
     }
     safeLog?.('info', `[${taskId}] LLM Stage: Processed ${processedCount} sources with ${llmErrors} errors.`);
 

@@ -28,7 +28,7 @@ const SingleCrawlRequestSchema = z.object({
     max_urls: z.coerce.number().int().min(1).optional().default(1000).describe('Maximum number of URLs to fetch and process (default: 1000).'),
 });
 const CrawlInputSchema = z.object({
-    requests: z.array(SingleCrawlRequestSchema).min(1, { message: 'At least one crawl request is required.' })
+    requests: z.array(SingleCrawlRequestSchema).min(1, { message: 'At least one crawl request is required.' }).describe('An array containing one or more crawl request objects, each requiring topic_or_url and category.')
 });
 type ValidatedSingleCrawlArgs = z.infer<typeof SingleCrawlRequestSchema>;
 type ValidatedCrawlInput = z.infer<typeof CrawlInputSchema>;

@@ -17,9 +17,9 @@ const QUEUE_FILE = path.join(__dirname, '..', 'queue.txt'); // Go up one level f
 
 // Define the Zod schema for input validation
 const ExtractUrlsSchema = z.object({
-  url: z.string().url({ message: 'Valid URL is required' }),
-  add_to_queue: z.boolean().optional().default(false),
-  maxDepth: z.number().int().min(0).optional().default(1),
+  url: z.string().url({ message: 'Valid URL is required' }).describe('The complete URL of the webpage to analyze.'),
+  add_to_queue: z.boolean().optional().default(false).describe('If true, add extracted URLs to the processing queue.'),
+  maxDepth: z.number().int().min(0).optional().default(1).describe('Max additional path segments deeper than the input URL to consider (e.g., 0=same level, 1=one level deeper). Default 1.'),
 });
 
 type ExtractUrlsArgs = z.infer<typeof ExtractUrlsSchema>;

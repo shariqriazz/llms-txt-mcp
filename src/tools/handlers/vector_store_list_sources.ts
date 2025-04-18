@@ -19,7 +19,7 @@ interface GroupedSources {
 
 // Define Zod schema for input validation
 const ListSourcesInputSchema = z.object({
-  category: z.string().optional(),
+  category: z.string().optional().describe('Optional category name to filter sources by.'),
 });
 
 export class VectorStoreListSourcesHandler extends BaseHandler {

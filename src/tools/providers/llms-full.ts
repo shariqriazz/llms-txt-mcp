@@ -19,6 +19,7 @@ import {
   GetTaskStatusHandler,
   GetTaskDetailsHandler,
   CheckProgressHandler, // Added new handler
+  SynthesizeAnswerHandler,
 } from "../handlers/index.js";
 import { pipelineEmitter } from '../../pipeline_state.js'; // Import the event emitter
 
@@ -222,6 +223,15 @@ const llmsFullToolDefinitions: Record<string, LlmsFullToolDefinition> = {
         description: 'Provides a summary report of crawl, process, and embed tasks, categorized by status (completed, running, queued, failed, cancelled) and showing progress for running tasks.',
         parameters: z.object({}),
         handlerClass: CheckProgressHandler,
+    },
+    synthesize_answer: {
+        name: 'llms_full_synthesize_answer_from_docs',
+        description: 'Searches the vector store for context related to a query and uses an LLM to synthesize an answer based on the results.',
+        parameters: z.object({
+            query: z.string().min(1).describe('The user query to search for and synthesize an answer from.'),
+            // Add other potential parameters like search limit, score threshold?
+        }),
+        handlerClass: SynthesizeAnswerHandler,
     },
   };
 

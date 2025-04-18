@@ -27,7 +27,7 @@ type LogFunction = (level: 'error' | 'debug' | 'info' | 'notice' | 'warning' | '
 // --- Input Schema ---
 const SingleEmbedRequestSchema = z.string().min(1, { message: 'The task ID of the completed process stage is required.' });
 const EmbedInputSchema = z.object({
-    requests: z.array(SingleEmbedRequestSchema).min(1, { message: 'At least one process task ID is required.' })
+    requests: z.array(SingleEmbedRequestSchema).min(1, { message: 'At least one process task ID is required.' }).describe('An array of completed process_task_ids.')
 });
 type ValidatedSingleEmbedArgs = z.infer<typeof SingleEmbedRequestSchema>;
 type ValidatedEmbedInput = z.infer<typeof EmbedInputSchema>;
