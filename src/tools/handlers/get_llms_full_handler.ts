@@ -15,6 +15,8 @@ import { BaseHandler } from './base-handler.js';
     import { ApiClient } from '../api-client.js';
 
     // --- Input Schema ---
+    const StopStageEnum = z.enum(['crawl', 'synthesize']).optional().describe("Optionally stop processing after this stage ('crawl' or 'synthesize').");
+
     const ProcessQueryRequestSchema = z.object({
       topic_or_url: z.string().min(1).optional().describe('The topic keyword or specific URL to process (required unless providing a file path).'),
       category: z.string().min(1).describe('The category to assign to the processed content (required).'),
@@ -23,9 +25,9 @@ import { BaseHandler } from './base-handler.js';
       max_llm_calls: z.coerce.number().int().min(1).optional().default(1000).describe('Maximum number of calls to the LLM for synthesizing pages (default: 1000). Only used if synthesize stage runs.'),
       crawl_urls_file_path: z.string().optional().describe('Optional path to a local JSON file containing an array of URLs. If provided, the crawl stage is skipped.'),
       synthesized_content_file_path: z.string().optional().describe('Optional path to a local text/markdown file containing pre-synthesized content. If provided, crawl and synthesize stages are skipped.'),
+      stop_after_stage: StopStageEnum, // Added stop flag
     }).refine(data => data.topic_or_url || data.crawl_urls_file_path || data.synthesized_content_file_path, {
         message: "Either topic_or_url, crawl_urls_file_path, or synthesized_content_file_path must be provided.",
-        // Add path if needed, though refine applies to the whole object
     });
 
 
@@ -40,13 +42,13 @@ import { BaseHandler } from './base-handler.js';
         discoveredUrlsFilePath: string;
         category: string;
         isSourceLocal: boolean;
-        originalTopicOrUrl: string; // Keep original for context even if path provided
+        originalTopicOrUrl: string;
     }
 
     interface SynthesizeResult {
         processedFilePath: string;
         category: string;
-        originalTopicOrUrl: string; // Keep original for context
+        originalTopicOrUrl: string;
     }
 
 
@@ -132,37 +134,44 @@ import { BaseHandler } from './base-handler.js';
         try {
             let crawlResult: CrawlResult | null = null;
             let synthesizeResult: SynthesizeResult | null = null;
+            let completedNormally = false;
 
             // Determine starting point based on provided inputs
             if (request.synthesized_content_file_path) {
                 // --- Skip to Embed Stage ---
                 this.safeLog?.('info', `[${mainTaskId}] Skipping Crawl and Synthesize stages, using provided content file: ${request.synthesized_content_file_path}`);
                 updateTaskDetails(mainTaskId, `Starting Embed stage using file: ${request.synthesized_content_file_path}...`);
-                // SynthesizeResult needs category and original topic (even if null/derived)
                 synthesizeResult = {
                     processedFilePath: request.synthesized_content_file_path,
                     category: request.category,
-                    originalTopicOrUrl: request.topic_or_url || request.synthesized_content_file_path // Use path as fallback identifier
+                    originalTopicOrUrl: request.topic_or_url || request.synthesized_content_file_path
                 };
                 await this._executeEmbedStage(mainTaskId, synthesizeResult);
+                completedNormally = true; // Embed is the last stage
 
             } else if (request.crawl_urls_file_path) {
                 // --- Skip to Synthesize Stage ---
                 this.safeLog?.('info', `[${mainTaskId}] Skipping Crawl stage, using provided URL file: ${request.crawl_urls_file_path}`);
                 updateTaskDetails(mainTaskId, `Starting Synthesize stage using URL file: ${request.crawl_urls_file_path}...`);
-                // CrawlResult needs category, original topic, and path
                 crawlResult = {
                     discoveredUrlsFilePath: request.crawl_urls_file_path,
                     category: request.category,
-                    isSourceLocal: true, // Assume local if path provided? Or determine based on content? For now, assume local.
-                    originalTopicOrUrl: request.topic_or_url || request.crawl_urls_file_path // Use path as fallback identifier
+                    isSourceLocal: true,
+                    originalTopicOrUrl: request.topic_or_url || request.crawl_urls_file_path
                 };
                 synthesizeResult = await this._executeSynthesizeStage(mainTaskId, request, crawlResult);
 
                 if (isTaskCancelled(mainTaskId)) throw new McpError(ErrorCode.InternalError, `Task ${mainTaskId} cancelled during synthesize.`);
 
-                updateTaskDetails(mainTaskId, `Starting Embed stage for ${description}...`);
-                await this._executeEmbedStage(mainTaskId, synthesizeResult);
+                // Check if we should stop after synthesize
+                if (request.stop_after_stage === 'synthesize') {
+                    this.safeLog?.('info', `[${mainTaskId}] Stopping after successful Synthesize stage as requested.`);
+                    completedNormally = true;
+                } else {
+                    updateTaskDetails(mainTaskId, `Starting Embed stage for ${description}...`);
+                    await this._executeEmbedStage(mainTaskId, synthesizeResult);
+                    completedNormally = true; // Embed is the last stage
+                }
 
             } else if (request.topic_or_url) {
                 // --- Full Pipeline ---
@@ -171,25 +180,52 @@ import { BaseHandler } from './base-handler.js';
 
                 if (isTaskCancelled(mainTaskId)) throw new McpError(ErrorCode.InternalError, `Task ${mainTaskId} cancelled during crawl.`);
 
-                updateTaskDetails(mainTaskId, `Starting Synthesize stage for ${request.topic_or_url}...`);
-                synthesizeResult = await this._executeSynthesizeStage(mainTaskId, request, crawlResult);
+                // Check if we should stop after crawl
+                if (request.stop_after_stage === 'crawl') {
+                     this.safeLog?.('info', `[${mainTaskId}] Stopping after successful Crawl stage as requested.`);
+                     completedNormally = true;
+                } else {
+                    updateTaskDetails(mainTaskId, `Starting Synthesize stage for ${request.topic_or_url}...`);
+                    synthesizeResult = await this._executeSynthesizeStage(mainTaskId, request, crawlResult);
 
-                if (isTaskCancelled(mainTaskId)) throw new McpError(ErrorCode.InternalError, `Task ${mainTaskId} cancelled during synthesize.`);
+                    if (isTaskCancelled(mainTaskId)) throw new McpError(ErrorCode.InternalError, `Task ${mainTaskId} cancelled during synthesize.`);
 
-                updateTaskDetails(mainTaskId, `Starting Embed stage for ${request.topic_or_url}...`);
-                await this._executeEmbedStage(mainTaskId, synthesizeResult);
+                    // Check if we should stop after synthesize
+                    if (request.stop_after_stage === 'synthesize') {
+                        this.safeLog?.('info', `[${mainTaskId}] Stopping after successful Synthesize stage as requested.`);
+                        completedNormally = true;
+                    } else {
+                        updateTaskDetails(mainTaskId, `Starting Embed stage for ${request.topic_or_url}...`);
+                        await this._executeEmbedStage(mainTaskId, synthesizeResult);
+                        completedNormally = true; // Embed is the last stage
+                    }
+                }
             } else {
-                 // This case should be prevented by the Zod refine validation
                  throw new Error("Invalid request: No topic, URL, or file path provided.");
             }
 
 
             if (isTaskCancelled(mainTaskId)) throw new McpError(ErrorCode.InternalError, `Task ${mainTaskId} cancelled during final stage.`);
 
-            // If all stages succeeded
-            this.safeLog?.('info', `[${mainTaskId}] Query processing COMPLETED successfully for: ${description}`);
-            updateTaskDetails(mainTaskId, `Processing completed successfully.`);
-            setTaskStatus(mainTaskId, 'completed');
+            // If all executed stages succeeded
+            if (completedNormally) {
+                this.safeLog?.('info', `[${mainTaskId}] Query processing COMPLETED successfully for: ${description} (Stopped after: ${request.stop_after_stage || 'embed'})`);
+                // Only overwrite details if the *full* pipeline completed (i.e., no stop_after_stage was set or it was embed)
+                // Otherwise, leave the details containing the intermediate file path from the last completed stage.
+                if (!request.stop_after_stage) {
+                    // Ensure the final message reflects full completion if embed stage ran
+                     if (getTaskStatus(mainTaskId)?.details?.startsWith('Embed Stage:')) {
+                         // Keep the embed success message
+                     } else {
+                         // Fallback generic success message if needed (shouldn't happen often)
+                         updateTaskDetails(mainTaskId, `Processing completed successfully.`);
+                     }
+                } else {
+                    // If stopped early, the details should already contain the intermediate file path JSON
+                    this.safeLog?.('info', `[${mainTaskId}] Task stopped early after ${request.stop_after_stage} stage. Final details should contain intermediate results.`);
+                }
+                setTaskStatus(mainTaskId, 'completed');
+            }
 
         } catch (error: any) {
             this.safeLog?.('error', `[${mainTaskId}] Processing failed for query ${description}. Reason: ${error.message}`);
@@ -208,28 +244,26 @@ import { BaseHandler } from './base-handler.js';
       }
 
       // --- Stage Execution Methods ---
+      // (These remain largely the same, just ensure they return results correctly
+      // and handle potential cancellation checks passed via mainTaskId)
 
-      // _executeCrawlStage remains largely the same as before
       private async _executeCrawlStage(mainTaskId: string, request: QueryRequest): Promise<CrawlResult> {
         let discoveredUrls: string[] = [];
         let isSourceLocal = false;
-        // topic_or_url is guaranteed by the calling logic if this stage runs
         const { topic_or_url, category, crawl_depth, max_urls } = request;
         let urlsFilePath = '';
 
         await retryAsyncFunction(
             async () => {
                 if (isTaskCancelled(mainTaskId)) throw new McpError(ErrorCode.InternalError, `Task ${mainTaskId} cancelled.`);
-
                 updateTaskDetails(mainTaskId, `Crawl Stage: Starting discovery for ${topic_or_url}...`);
-                const discoveryResult = await discoverStartingPoint(topic_or_url!, this.safeLog); // Use non-null assertion
+                const discoveryResult = await discoverStartingPoint(topic_or_url!, this.safeLog);
                 const start_url = discoveryResult.startUrlOrPath;
                 isSourceLocal = discoveryResult.isLocal;
                 updateTaskDetails(mainTaskId, `Crawl Stage: Discovery complete. Starting point: ${start_url} (Local: ${isSourceLocal})`);
 
                 if (!isSourceLocal) {
                     if (!PipelineState.acquireBrowserLock()) {
-                         this.safeLog?.('warning', `[${mainTaskId}] Failed to acquire browser lock for crawl. Retrying...`);
                          throw new Error("Could not acquire browser lock for crawling stage.");
                     }
                     this.safeLog?.('debug', `[${mainTaskId}] Acquired browser lock for crawl.`);
@@ -260,16 +294,15 @@ import { BaseHandler } from './base-handler.js';
         this.safeLog?.('info', `[${mainTaskId}] Saved discovered URLs to ${urlsFilePath}`);
 
         const result: CrawlResult = { discoveredUrlsFilePath: urlsFilePath, category, isSourceLocal, originalTopicOrUrl: topic_or_url! };
-        // Store structured result in task details for potential restart
+        // Store structured result in task details
         updateTaskDetails(mainTaskId, JSON.stringify({ stage: 'crawl', result }, null, 2));
         return result;
       }
 
-      // Modified to accept CrawlResult directly
       private async _executeSynthesizeStage(mainTaskId: string, request: QueryRequest, crawlResult: CrawlResult): Promise<SynthesizeResult> {
         let finalLlmsContent = '';
         const { discoveredUrlsFilePath, category, originalTopicOrUrl, isSourceLocal } = crawlResult;
-        const { max_llm_calls } = request; // Get max_llm_calls from the original request
+        const { max_llm_calls } = request;
         let outputFilename = '';
         let outputPath = '';
 
@@ -316,12 +349,11 @@ import { BaseHandler } from './base-handler.js';
         await fs.writeFile(outputPath, finalLlmsContent, 'utf-8');
 
         const result: SynthesizeResult = { processedFilePath: outputPath, category, originalTopicOrUrl };
-        // Store structured result in task details for potential restart
+        // Store structured result in task details
         updateTaskDetails(mainTaskId, JSON.stringify({ stage: 'synthesize', result }, null, 2));
         return result;
       }
 
-      // Modified to accept SynthesizeResult directly
       private async _executeEmbedStage(mainTaskId: string, synthesizeResult: SynthesizeResult): Promise<void> {
         const { processedFilePath, category, originalTopicOrUrl } = synthesizeResult;
 
@@ -335,6 +367,7 @@ import { BaseHandler } from './base-handler.js';
                     throw new Error("Could not acquire embedding resource lock. System busy?");
                 }
                 this.safeLog?.('debug', `[${mainTaskId}] Acquired shared embedding lock.`);
+                let innerError: any = null;
                 try {
                     await this.apiClient.initCollection(QDRANT_COLLECTION_NAME);
                     updateTaskDetails(mainTaskId, `Embed Stage: Reading processed file: ${processedFilePath}`);
@@ -361,9 +394,15 @@ import { BaseHandler } from './base-handler.js';
                     } else {
                         this.safeLog?.('warning', `[${mainTaskId}] No vector points generated for ${processedFilePath} after embedding attempt.`);
                     }
+                } catch (error) {
+                    innerError = error;
+                    this.safeLog?.('error', `[${mainTaskId}] Error during embed/upsert attempt: ${JSON.stringify(error, null, 2)}`);
                 } finally {
                     PipelineState.releaseEmbeddingLock();
                     this.safeLog?.('debug', `[${mainTaskId}] Released shared embedding lock.`);
+                    if (innerError) {
+                        throw innerError;
+                    }
                 }
             },
             MAX_RETRY_ATTEMPTS, INITIAL_RETRY_DELAY_MS, `Embed Stage for ${processedFilePath} (Task ${mainTaskId})`, this.safeLog, mainTaskId
@@ -371,7 +410,6 @@ import { BaseHandler } from './base-handler.js';
 
          if (isTaskCancelled(mainTaskId)) throw new McpError(ErrorCode.InternalError, `Task ${mainTaskId} cancelled after embed attempt.`);
          const finalDetailMsg = `Embed Stage: Successfully indexed content from ${processedFilePath} into category '${category}'.`;
-         updateTaskDetails(mainTaskId, finalDetailMsg); // Keep final embed message simple
-         // Final success status is set in _triggerProcessingLoop
+         updateTaskDetails(mainTaskId, finalDetailMsg);
       }
     }

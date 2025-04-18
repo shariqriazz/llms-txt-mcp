@@ -11,6 +11,7 @@ This Model Context Protocol (MCP) server provides tools for managing and searchi
     *   **Crawl:** Discovers URLs for a topic (using Tavily) or starts from a given URL/path. Crawls linked pages based on depth/limits. Saves discovered URLs to a file. (Can be skipped by providing `crawl_urls_file_path`).
     *   **Synthesize:** Takes discovered URLs, extracts content, uses a configured LLM (Gemini, Ollama, or OpenRouter) to generate structured markdown summaries, and saves intermediate files. (Can be skipped by providing `synthesized_content_file_path`).
     *   **Embed:** Takes the synthesized markdown, chunks/embeds the content using the configured embedding provider, and indexes it into the Qdrant vector store.
+    *   **Stage Control:** Optionally skip initial stages (`crawl_urls_file_path`, `synthesized_content_file_path`) or stop after a specific stage (`stop_after_stage: 'crawl' | 'synthesize'`).
 *   **Task Management:** Tools to monitor and manage pipeline tasks (`llms_full_get_task_status`, `llms_full_get_task_details`, `llms_full_cancel_task`, `llms_full_check_progress`, `llms_full_cleanup_task_store`, `llms_full_restart_task`).
 *   **Task Restart:** Restart failed `get_llms_full` tasks from a specific stage (`crawl`, `synthesize`, `embed`) using previously generated intermediate data (`llms_full_restart_task`).
 *   **Concurrency Control:** Uses locks to manage shared resources (like the browser and embedding process). Sequential processing per query avoids stage conflicts.
@@ -35,7 +36,7 @@ This server provides the following tools:
     *   `llms_full_vector_store_search`: Search the vector store using natural language. Optionally filter by category (string or array), source URL/path pattern (`*` wildcard), and minimum score threshold (default 0.55).
 
 *   **Unified Pipeline Tool:**
-    *   `get_llms_full`: Processes one or more queries/URLs/files sequentially through crawl, synthesize, and embed stages. Accepts an array of requests, each specifying `category` and one of `topic_or_url`, `crawl_urls_file_path` (skips crawl), or `synthesized_content_file_path` (skips crawl & synthesize). Returns main task IDs for tracking.
+    *   `get_llms_full`: Processes one or more queries/URLs/files sequentially through crawl, synthesize, and embed stages. Accepts an array of requests, each specifying `category` and one of `topic_or_url`, `crawl_urls_file_path` (skips crawl), or `synthesized_content_file_path` (skips crawl & synthesize). Can optionally stop after a specific stage using `stop_after_stage: 'crawl' | 'synthesize'`. Returns main task IDs for tracking.
 
 *   **Task Management Tools:**
     *   `llms_full_get_task_status`: Get the status of a specific task (e.g., `get-llms-full`) using `taskId`, or list tasks filtered by `taskType` ('get-llms-full', 'all'). Control output detail with `detail_level` ('simple', 'detailed'). Includes ETA estimation for running tasks with progress.
@@ -180,8 +181,10 @@ Add/modify the entry in your client's MCP configuration file:
 
 *   "Use `tavily_search` to find recent news about vector databases."
 *   "Process documentation for 'shadcn ui' under category 'shadcn' using `get_llms_full`." (Note the task ID)
+*   "Process documentation for 'Radix UI' but stop after the crawl stage using `get_llms_full` with `stop_after_stage: 'crawl'`."
 *   "Process documentation using a pre-existing URL list file `path/to/urls.json` for category 'react' using `get_llms_full` with the `crawl_urls_file_path` parameter."
-*   "Process documentation using a pre-synthesized content file `path/to/content.md` for category 'nextjs' using `get_llms_full` with the `synthesized_content_file_path` parameter."
+*   "Process documentation using a pre-existing URL list file `path/to/urls.json` for category 'react' but stop after synthesis using `get_llms_full` with `crawl_urls_file_path` and `stop_after_stage: 'synthesize'`."
+*   "Process documentation using a pre-synthesized content file `path/to/content.md` for category 'nextjs' using `get_llms_full` with the `synthesized_content_file_path` parameter (runs embed only)."
 *   "Check the overall progress of tasks using `llms_full_check_progress`."
 *   "Get the status for task 'get-llms-full-xxxxxxxx-...' using `llms_full_get_task_status`."
 *   "Get the detailed results file path for completed task 'get-llms-full-xxxxxxxx-...' using `llms_full_get_task_details`."

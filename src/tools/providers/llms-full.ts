@@ -159,6 +159,7 @@ const llmsFullToolDefinitions: Record<string, LlmsFullToolDefinition> = {
                 max_llm_calls: z.coerce.number().int().min(1).optional().default(1000).describe('Max LLM calls for synthesis (default: 1000). Only used if synthesize stage runs.'),
                 crawl_urls_file_path: z.string().optional().describe('Optional path to a local JSON file containing an array of URLs. Skips crawl stage.'),
                 synthesized_content_file_path: z.string().optional().describe('Optional path to a local text/markdown file containing pre-synthesized content. Skips crawl and synthesize stages.'),
+                stop_after_stage: z.enum(['crawl', 'synthesize']).optional().describe("Optionally stop processing after this stage ('crawl' or 'synthesize')."), // Added stop flag
             })).min(1).describe('An array of one or more queries/URLs/files to process sequentially.')
         }),
         handlerClass: GetLlmsFullHandler, // Use renamed handler class
