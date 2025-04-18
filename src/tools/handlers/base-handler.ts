@@ -7,11 +7,11 @@ type LogFunction = (level: 'error' | 'debug' | 'info' | 'notice' | 'warning' | '
 
 export abstract class BaseHandler {
   protected apiClient: ApiClient;
-  protected safeLog?: LogFunction; // Optional logger
+  protected safeLog?: LogFunction;
 
   constructor(apiClient: ApiClient, safeLog?: LogFunction) {
     this.apiClient = apiClient;
-    this.safeLog = safeLog; // Store logger if provided
+    this.safeLog = safeLog;
   }
 
   protected abstract handle(args: any): Promise<McpToolResponse>;

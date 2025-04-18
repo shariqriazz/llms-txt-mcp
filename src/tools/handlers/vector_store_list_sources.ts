@@ -70,15 +70,14 @@ export class VectorStoreListSourcesHandler extends BaseHandler {
       const uniqueSourceStrings = new Set<string>();
       for (const sources of Object.values(subdomains)) {
         for (const sourceInfo of sources) {
-          uniqueSourceStrings.add(sourceInfo.source); // Add source string
+          uniqueSourceStrings.add(sourceInfo.source);
         }
       }
 
       // Convert to array and sort
       const sortedSourceStrings = Array.from(uniqueSourceStrings)
-        .sort((a, b) => a.localeCompare(b)); // Sort by source string
+        .sort((a, b) => a.localeCompare(b));
 
-      // Use letters for subdomain entries
       sortedSourceStrings.forEach((sourceString, index) => {
         // Display the source string directly as title is not available
         output.push(`${domainCounter}.${index + 1}. ${sourceString}`);
@@ -91,8 +90,7 @@ export class VectorStoreListSourcesHandler extends BaseHandler {
     return output.join('\n');
   }
 
-  async handle(args: any): Promise<McpToolResponse> { // Add args parameter
-    // Validate input
+  async handle(args: any): Promise<McpToolResponse> {
     const validationResult = ListSourcesInputSchema.safeParse(args);
     if (!validationResult.success) {
       const errorMessage = validationResult.error.errors.map(e => e.message).join(', ');
@@ -121,8 +119,8 @@ export class VectorStoreListSourcesHandler extends BaseHandler {
 
       while (true) {
         const scroll = await this.apiClient.qdrantClient.scroll(COLLECTION_NAME, {
-          filter, // Add filter to scroll request
-          with_payload: ['source'], // Only fetch source payload
+          filter,
+          with_payload: ['source'],
           with_vector: false,
           limit: pageSize,
           offset,

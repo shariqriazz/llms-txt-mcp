@@ -9,22 +9,21 @@ export class VectorStoreListCategoriesHandler extends BaseHandler {
   async handle(_args: any): Promise<McpToolResponse> {
     this.safeLog?.('info', `Executing vector_store_list_categories for collection: ${COLLECTION_NAME}`);
     const categories = new Set<string>();
-    let offset: string | number | undefined | null = undefined; // Qdrant offset type
+    let offset: string | number | undefined | null = undefined;
 
     try {
-      // Scroll through all points, retrieving only the category payload
       while (true) {
         this.safeLog?.('debug', `Scrolling collection '${COLLECTION_NAME}' with offset: ${offset}`);
         const scrollResult = await this.apiClient.qdrantClient.scroll(COLLECTION_NAME, {
-          limit: 250, // Adjust batch size as needed
+          limit: 250,
           offset: offset,
-          with_payload: ['category'], // Only fetch the category field
+          with_payload: ['category'],
           with_vector: false,
         });
 
         if (!scrollResult.points || scrollResult.points.length === 0) {
           this.safeLog?.('debug', 'Scroll finished, no more points.');
-          break; // No more points
+          break;
         }
 
         for (const point of scrollResult.points) {
@@ -34,11 +33,9 @@ export class VectorStoreListCategoriesHandler extends BaseHandler {
         }
 
         const nextOffset = scrollResult.next_page_offset;
-        // Ensure the offset is a type we can use for the next request
         if (typeof nextOffset === 'string' || typeof nextOffset === 'number') {
             offset = nextOffset;
         } else {
-            // If it's null, undefined, or an unexpected object type, stop scrolling
             this.safeLog?.('debug', `Scroll finished or encountered unexpected offset type: ${JSON.stringify(nextOffset)}`);
             break;
         }
@@ -56,7 +53,6 @@ export class VectorStoreListCategoriesHandler extends BaseHandler {
 
     } catch (error: any) {
       this.safeLog?.('error', `Failed to list categories: ${error.message}`);
-      // Handle specific Qdrant errors if necessary (e.g., collection not found)
       if (error.message?.includes('Not found') || error.status === 404) {
            throw new McpError(ErrorCode.InvalidRequest, `Collection '${COLLECTION_NAME}' not found.`);
       }

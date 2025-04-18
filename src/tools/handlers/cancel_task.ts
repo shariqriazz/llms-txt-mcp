@@ -11,7 +11,6 @@ import * as PipelineState from '../../pipeline_state.js';
 const CancelTaskInputSchema = z.object({
   taskId: z.string().min(1).optional().describe('The ID of the specific task to cancel.'),
   all: z.boolean().optional().default(false).describe('Set to true to cancel all active (running or queued) crawl, process, or embed tasks.'),
-  // Optional: Add a filter for task type if needed later?
 });
 type ValidatedCancelArgs = z.infer<typeof CancelTaskInputSchema>;
 
@@ -81,10 +80,6 @@ export class CancelTaskHandler extends BaseHandler {
 
       if (currentTaskInfo.status === 'running') {
         setTaskStatus(taskId, 'cancelled');
-        // Update details to reflect cancellation reason if possible
-        // Note: updateTaskDetails might only work for 'running' tasks in its current implementation.
-        // We might need to adjust updateTaskDetails or set details directly. Let's assume setTaskStatus handles final details.
-        // updateTaskDetails(taskId, `Cancellation requested by user.`);
         this.safeLog?.('info', `Requested cancellation for running task ${taskId}.`);
         return { content: [{ type: 'text', text: `Cancellation requested for running task ${taskId}. The process will stop shortly.` }] };
       } else if (currentTaskInfo.status === 'queued') {
@@ -102,19 +97,15 @@ export class CancelTaskHandler extends BaseHandler {
               removed = PipelineState.removeFromEmbedQueue(taskId);
               queueName = 'embed';
           }
-          // Add checks for legacy queues if they are still potentially used
-          // else if (taskId.startsWith('llms-full-gen-')) { ... }
 
           if (removed) {
               setTaskStatus(taskId, 'cancelled');
-              // updateTaskDetails(taskId, `Task cancelled while queued.`); // updateTaskDetails might not work for non-running
               this.safeLog?.('info', `Removed queued task ${taskId} from ${queueName} queue and marked as cancelled.`);
               return { content: [{ type: 'text', text: `Task ${taskId} was queued in '${queueName}' and has been removed and cancelled.` }] };
           } else {
                // Task status is 'queued' but it wasn't found in the expected queue.
                this.safeLog?.('warning', `Task ${taskId} was queued but not found in ${queueName} queue (likely dequeued just before cancellation). Marking cancelled.`);
                setTaskStatus(taskId, 'cancelled');
-               // updateTaskDetails(taskId, `Task cancelled (was queued, likely dequeued just before cancellation).`);
                return { content: [{ type: 'text', text: `Task ${taskId} was queued but not found in the ${queueName} queue (possibly already running?). Marked as cancelled.` }] };
           }
       } else {

@@ -1,5 +1,5 @@
 import { BaseHandler } from './base-handler.js';
-import { McpToolResponse /*, ProcessTaskArgs Define later */ } from '../types.js';
+import { McpToolResponse } from '../types.js';
 import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import { ApiClient } from '../api-client.js';
 import { z } from 'zod';
@@ -7,7 +7,6 @@ import fs from 'fs/promises'; // Already imported, ensure it stays
 import path from 'path';
 
 // Task Management
-// Removed getTaskDetails, will use getTaskStatus().details instead
 import { registerTask, setTaskStatus, isTaskCancelled, updateTaskDetails, getTaskStatus } from '../../tasks.js';
 // Pipeline State (Locks & Queues for Process Tool)
 import * as PipelineState from '../../pipeline_state.js';
@@ -15,44 +14,37 @@ import { isProcessToolFree, acquireProcessToolLock, releaseProcessToolLock, enqu
 // Utilities
 import { retryAsyncFunction } from '../utils/retry.js';
 import { processSourcesWithLlm } from '../utils/llm_processor.js';
-import { sanitizeFilename } from '../utils/file_utils.js'; // Needed for saving intermediate result
+import { sanitizeFilename } from '../utils/file_utils.js';
 
 // --- Configuration & Constants ---
 const MAX_RETRY_ATTEMPTS = 5;
 const INITIAL_RETRY_DELAY_MS = 1000;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const INTERMEDIATE_OUTPUT_DIR = './generated_llms_guides/intermediate_processed'; // Save processed text before embedding
+const INTERMEDIATE_OUTPUT_DIR = './generated_llms_guides/intermediate_processed';
 
-// Define LogFunction type
 type LogFunction = (level: 'error' | 'debug' | 'info' | 'notice' | 'warning' | 'critical' | 'alert' | 'emergency', data: any) => void;
 
 // --- Input Schema ---
-// Define schema for a single request within the array
 const SingleProcessRequestSchema = z.object({
     crawl_task_id: z.string().min(1, { message: 'The task ID of the completed crawl stage is required.' }),
     max_llm_calls: z.coerce.number().int().min(1).optional().default(1000).describe('Maximum number of calls to the LLM for processing pages (default: 1000).'),
 });
-// Main input schema expects an array of crawl_task_ids or request objects
 const ProcessInputSchema = z.object({
-    // Allow either an array of strings (task IDs) or an array of objects
     requests: z.union([
-        z.array(z.string().min(1)).min(1), // Array of crawl_task_id strings
-        z.array(SingleProcessRequestSchema).min(1) // Array of request objects
+        z.array(z.string().min(1)).min(1),
+        z.array(SingleProcessRequestSchema).min(1)
     ]).describe('An array of completed crawl_task_ids or an array of objects containing crawl_task_id and optional max_llm_calls.')
 });
-// Type for the validated arguments of a single execution
 type ValidatedSingleProcessArgs = z.infer<typeof SingleProcessRequestSchema>;
-// Type for the overall validated input
 type ValidatedProcessInput = z.infer<typeof ProcessInputSchema>;
 
 // Interface for data retrieved from the crawl task
 interface CrawlTaskDetails {
     status: string;
-    discoveredUrlsFilePath: string; // Expect file path now
+    discoveredUrlsFilePath: string;
     isSourceLocal: boolean;
     originalTopicOrUrl: string;
     category: string;
-    // crawl_depth might be needed if saving uses it? Check _finalizeStage usage
 }
 
 export class ProcessHandler extends BaseHandler {
@@ -78,10 +70,9 @@ export class ProcessHandler extends BaseHandler {
             let crawlTaskId: string;
             let maxLlmCalls: number | undefined;
 
-            // Normalize input: handle both string array and object array
             if (typeof request === 'string') {
                 crawlTaskId = request;
-                maxLlmCalls = undefined; // Use default in _executeProcess
+                maxLlmCalls = undefined;
             } else {
                 crawlTaskId = request.crawl_task_id;
                 maxLlmCalls = request.max_llm_calls;
@@ -93,24 +84,22 @@ export class ProcessHandler extends BaseHandler {
                 this.safeLog?.('warning', `Skipping process request: Crawl task ${crawlTaskId} not found.`);
                 taskResponses.push(`Skipped: Crawl task ${crawlTaskId} not found.`);
                 invalidCount++;
-                continue; // Skip to the next request
+                continue;
             }
             if (crawlTaskStatusInfo.status !== 'completed') {
                  this.safeLog?.('warning', `Skipping process request: Crawl task ${crawlTaskId} has status '${crawlTaskStatusInfo.status}', expected 'completed'.`);
                  taskResponses.push(`Skipped: Crawl task ${crawlTaskId} status is '${crawlTaskStatusInfo.status}'.`);
                  invalidCount++;
-                 continue; // Skip to the next request
+                 continue;
             }
             // --- End Pre-check ---
 
-            // Prepare args for execution/queueing, ensuring max_llm_calls is always a number
             const executionArgs: ValidatedSingleProcessArgs = {
                 crawl_task_id: crawlTaskId,
-                // Use provided maxLlmCalls or the schema's default value (1000)
                 max_llm_calls: maxLlmCalls ?? SingleProcessRequestSchema.shape.max_llm_calls._def.defaultValue(),
             };
 
-            const taskId = registerTask('process'); // New task type 'process'
+            const taskId = registerTask('process');
             this.safeLog?.('info', `Registered process task ${taskId} for crawl task: ${crawlTaskId}`);
 
             const queuedTask = { taskId, args: executionArgs };
@@ -120,7 +109,6 @@ export class ProcessHandler extends BaseHandler {
                     this.safeLog?.('info', `[${taskId}] Acquired process tool lock. Starting execution immediately.`);
                     setTaskStatus(taskId, 'running');
                     updateTaskDetails(taskId, 'Starting LLM processing stage...');
-                    // Use executionArgs here
                     this._executeProcess(taskId, executionArgs);
                     taskResponses.push(`Task ${taskId} started for crawl task "${crawlTaskId}".`);
                     startedCount++;
@@ -140,7 +128,7 @@ export class ProcessHandler extends BaseHandler {
                 taskResponses.push(`Task ${taskId} queued (Position: ${position}) for crawl task "${crawlTaskId}".`);
                 queuedCount++;
             }
-        } // End loop
+        }
 
         const summary = `Processed ${requests.length} process requests. Started: ${startedCount}, Queued: ${queuedCount}, Invalid/Skipped: ${invalidCount}.\nTask details:\n${taskResponses.join('\n')}`;
         return { content: [{ type: 'text', text: summary }] };
@@ -221,7 +209,6 @@ export class ProcessHandler extends BaseHandler {
             // --- Save Intermediate Processed File ---
             updateTaskDetails(taskId, 'LLM processing complete. Saving intermediate file...');
             await fs.mkdir(INTERMEDIATE_OUTPUT_DIR, { recursive: true });
-            // Use crawl task's topic/URL and category for filename consistency? Or process task ID? Let's use topic/URL + category.
             const baseFilename = sanitizeFilename(isSourceLocal ? path.basename(originalTopicOrUrl) : originalTopicOrUrl);
             // Include category in filename to prevent overwrites if same topic is processed for different categories
             outputFilename = `${baseFilename}-category-${sanitizeFilename(category)}-processed.txt`;
@@ -288,7 +275,6 @@ export class ProcessHandler extends BaseHandler {
                     this.safeLog?.('info', `[${nextTask.taskId}] Dequeuing task for process tool. Remaining queue size: ${getProcessQueueLength()}`);
                     setTaskStatus(nextTask.taskId, 'running');
                     updateTaskDetails(nextTask.taskId, 'Starting LLM processing stage from queue...');
-                    // Cast args to the single request type
                     this._executeProcess(nextTask.taskId, nextTask.args as ValidatedSingleProcessArgs);
                 } else {
                     this.safeLog?.('warning', 'Process tool queue was not empty, but dequeue failed. Releasing lock.');

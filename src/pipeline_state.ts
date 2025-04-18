@@ -1,10 +1,8 @@
-// src/pipeline_state.ts
-
-import { EventEmitter } from 'events'; // Added EventEmitter import
-import { QueuedPipelineTask } from './tools/types.js'; // Corrected import path
+import { EventEmitter } from 'events';
+import { QueuedPipelineTask } from './tools/types.js';
 
 // --- Event Emitter ---
-export const pipelineEmitter = new EventEmitter(); // Added shared emitter instance
+export const pipelineEmitter = new EventEmitter();
 
 // --- Pipeline Stage Status ---
 // --- Tool-Specific Locks ---
@@ -183,14 +181,7 @@ export function triggerNextPipelineSteps(): void {
     // Debounce the trigger to avoid rapid checks
     if (triggerTimeout) return;
     triggerTimeout = setTimeout(() => {
-        // console.log("[Pipeline] Trigger received to check for next steps."); // Keep log for debugging if needed
         pipelineEmitter.emit('checkQueues'); // Emit event instead of just logging
         triggerTimeout = null;
     }, 100); // Wait 100ms before emitting
 }
-
-// Placeholder for triggering embedding check (Legacy - likely remove or adapt)
-// export function triggerEmbeddingCheck(): void {
-//     console.log("[Pipeline] Placeholder: Triggering check for next legacy embedding task...");
-//     triggerNextPipelineSteps();
-// }

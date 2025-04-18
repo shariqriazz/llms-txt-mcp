@@ -9,7 +9,7 @@
  */
 export function sanitizeFilename(name: string, maxLength: number = 100): string {
   return name
-    .replace(/^(?:https?:\/\/)?(?:www\.)?/i, '') // Remove protocol and www.
-    .replace(/[^a-z0-9_.-]/gi, '_') // Replace invalid chars with _
-    .substring(0, maxLength); // Truncate
+    .replace(/^(?:https?:\/\/)?(?:www\.)?/i, '')
+    .replace(/[^a-z0-9_.-]/gi, '_')
+    .substring(0, maxLength);
 }

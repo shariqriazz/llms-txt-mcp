@@ -1,12 +1,10 @@
-// Updated DocumentPayload to reflect actual Qdrant structure
 interface DocumentPayload {
   text: string;
-  source: string; // Changed from url
-  chunk_index: number; // Added chunk_index
-  [key: string]: unknown; // Allow other potential fields
+  source: string;
+  chunk_index: number;
+  [key: string]: unknown;
 }
 
-// Updated type guard for the new DocumentPayload structure
 export function isDocumentPayload(payload: unknown): payload is DocumentPayload {
   if (!payload || typeof payload !== 'object') return false;
   const p = payload as Partial<DocumentPayload>;
@@ -14,7 +12,6 @@ export function isDocumentPayload(payload: unknown): payload is DocumentPayload 
     typeof p.text === 'string' &&
     typeof p.source === 'string' &&
     typeof p.chunk_index === 'number'
-    // Removed checks for _type, url, title, timestamp
   );
 }
 
@@ -36,7 +33,6 @@ export interface McpToolResponse {
   isError?: boolean;
 }
 
-// Added types for Qdrant collection info check
 interface QdrantVectorParams {
   size: number;
   distance: string;
@@ -58,24 +54,21 @@ export interface QdrantCollectionInfo {
 export interface QdrantPoint {
   id: string | number;
   vector: number[];
-  payload?: Record<string, any>; // Payload is optional and can have any structure
+  payload?: Record<string, any>;
 }
 
-// Arguments for llms-full generation tasks (matching Zod schema in handler) // Updated comment
-export interface LlmsFullTaskArgs { // Renamed interface
+export interface LlmsFullTaskArgs {
     topic_or_url: string;
     category: string;
     crawl_depth?: number;
     max_urls?: number;
     max_llm_calls?: number;
-    // Internal data passed between stages
     discoveredUrls?: string[];
     isSourceLocal?: boolean;
-    finalLlmsContent?: string; // Renamed property
+    finalLlmsContent?: string;
 }
 
-// Structure for items in pipeline queues (used by pipeline_state)
 export interface QueuedPipelineTask {
     taskId: string;
-    args: Record<string, any>; // Allow any arguments structure for queued tasks
+    args: Record<string, any>;
 }

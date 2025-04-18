@@ -49,9 +49,7 @@ export function checkLlmsFullConfig(safeLog: LogFunction): void {
              safeLog('warning', 'EMBEDDING_PROVIDER is openai, but OPENAI_API_KEY is not set.');
              missingVars = true;
         } else if (provider === 'ollama' && !process.env.OLLAMA_BASE_URL) {
-             // Note: Ollama URL might be handled by OLLAMA_HOST env var by the library itself, this check might be redundant
              safeLog('warning', 'EMBEDDING_PROVIDER is ollama, but OLLAMA_BASE_URL is not set (Ollama library might use OLLAMA_HOST instead).');
-             // missingVars = true; // Commenting out as it might not be strictly required depending on ollama lib version
         } else if (provider === 'google' && !process.env.GEMINI_API_KEY) {
           safeLog('warning', 'EMBEDDING_PROVIDER is google, but GEMINI_API_KEY is not set (needed for embeddings and guide generation).');
           missingVars = true;
@@ -60,7 +58,6 @@ export function checkLlmsFullConfig(safeLog: LogFunction): void {
     // Also check GEMINI_API_KEY specifically if the generate tool might be used, even if embedding provider is different
     if (!process.env.GEMINI_API_KEY) {
         safeLog('warning', 'GEMINI_API_KEY environment variable not set. The llms_full_generate_llms_full_guide tool requires it.');
-        // Don't set missingVars = true here, as other tools might still work
     }
 
     if (missingVars) {
@@ -68,7 +65,6 @@ export function checkLlmsFullConfig(safeLog: LogFunction): void {
         isLlmsFullConfigured = false;
     } else {
         try {
-            // Initialize ApiClient only if basic config seems present
             apiClient = new ApiClient();
             isLlmsFullConfigured = true;
              safeLog('info', 'llms-full ApiClient initialized.');
@@ -155,7 +151,7 @@ const llmsFullToolDefinitions: Record<string, LlmsFullToolDefinition> = {
         name: 'llms_full_crawl',
         description: 'Starts the crawling and discovery stage for one or more topics/URLs. Accepts an array of requests, each returning a task ID.',
         parameters: z.object({
-            requests: z.array(z.object({ // Expect an array of requests
+            requests: z.array(z.object({
                 topic_or_url: z.string().min(1).describe('Topic (e.g., "shadcn ui") or starting URL/path.'),
                 category: z.string().min(1).describe('Category to associate with the content.'),
                 crawl_depth: z.coerce.number().int().min(0).optional().default(5).describe('How many levels deeper than the discovered/provided root URL to crawl (default: 5).'),
@@ -169,8 +165,8 @@ const llmsFullToolDefinitions: Record<string, LlmsFullToolDefinition> = {
         description: 'Starts the LLM processing stage using the output of completed crawl task(s). Accepts an array of crawl_task_ids or request objects. Returns task IDs.',
         parameters: z.object({
             requests: z.union([
-                z.array(z.string().min(1)).min(1), // Array of crawl_task_id strings
-                z.array(z.object({ // Array of request objects
+                z.array(z.string().min(1)).min(1),
+                z.array(z.object({
                     crawl_task_id: z.string().min(1).describe('The task ID of the completed crawl stage.'),
                     max_llm_calls: z.coerce.number().int().min(1).optional().default(1000).describe('Maximum LLM calls for processing pages (default: 1000).'),
                 })).min(1)
@@ -217,15 +213,15 @@ const llmsFullToolDefinitions: Record<string, LlmsFullToolDefinition> = {
     cleanup_task_store: {
         name: 'llms_full_cleanup_task_store',
         description: 'Removes completed, failed, and cancelled tasks from the internal task list.',
-        parameters: z.object({}), // No parameters
+        parameters: z.object({}),
         handlerClass: CleanupTaskStoreHandler,
     },
     // --- New Progress Summary Tool ---
     check_progress: {
         name: 'llms_full_check_progress',
         description: 'Provides a summary report of crawl, process, and embed tasks, categorized by status (completed, running, queued, failed, cancelled) and showing progress for running tasks.',
-        parameters: z.object({}), // No input parameters
-        handlerClass: CheckProgressHandler, // Reference the new handler
+        parameters: z.object({}),
+        handlerClass: CheckProgressHandler,
     },
   };
 
@@ -250,7 +246,7 @@ function zodToJsonSchema(zodSchema: z.ZodObject<any>): any {
         else if (prop instanceof z.ZodString) type = 'string';
         else if (prop instanceof z.ZodNumber) type = 'number';
         else if (prop instanceof z.ZodBoolean) type = 'boolean';
-        else if (prop instanceof z.ZodArray) { type = 'array'; items = { type: 'string' }; } // Basic array item type
+        else if (prop instanceof z.ZodArray) { type = 'array'; items = { type: 'string' }; }
         else if (prop instanceof z.ZodEnum) { type = 'string'; enumValues = prop.options; }
 
         if (oneOf) {
@@ -335,8 +331,6 @@ function zodToJsonSchema(zodSchema: z.ZodObject<any>): any {
                     // Validate args using Zod before execution
                     const validatedArgs = definition.parameters.parse(args);
                     // Call the handle method on the instantiated handler
-                    // Pass context if the handler accepts it (for cancellation)
-                    // NOTE: Actual cancellation token passing depends on MCP SDK/Server implementation
                     const result = await handlerInstance.handle(validatedArgs, { cancellationToken: undefined }); // Placeholder context
 
                      // Format based on expected structure
@@ -346,23 +340,19 @@ function zodToJsonSchema(zodSchema: z.ZodObject<any>): any {
                         );
                         return result;
                     } else {
-                        // Fallback formatting
                         safeLog('warning', `Unexpected result format from ${definition.name}. Wrapping.`);
                         const textResult = typeof result === 'object' ? JSON.stringify(result, null, 2) : String(result);
                         return { content: [{ type: "text", text: textResult.trim() }] };
                     }
                 } catch (error: any) {
                      safeLog('error', `llms-full tool ${definition.name} failed: ${error.message}`);
-                     // Rethrow for the main handler to catch and format
                      throw error;
                 }
             });
         } else {
-             // Special handling for tools that DO NOT need initCollection
              handlers.set(definition.name, async (args) => {
                  try {
                      const validatedArgs = definition.parameters.parse(args);
-                     // Pass context if the handler accepts it (though cancel likely doesn't need it)
                      const result = await handlerInstance.handle(validatedArgs, { cancellationToken: undefined }); // Placeholder context
                      return result;
                  } catch (error: any) {

@@ -15,15 +15,14 @@ export class VectorStoreRemoveSourceHandler extends BaseHandler {
     }
 
     try {
-      // Delete using filter to match any of the provided URLs
       const result = await this.apiClient.qdrantClient.delete(COLLECTION_NAME, {
         filter: {
           should: args.urls.map((url: string) => ({
-            key: 'source', // Use 'source' field for filtering
+            key: 'source',
             match: { value: url }
           }))
         },
-        wait: true // Ensure deletion is complete before responding
+        wait: true
       });
 
       if (!['acknowledged', 'completed'].includes(result.status)) {

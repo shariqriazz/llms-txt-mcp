@@ -1,19 +1,16 @@
 import { BaseHandler } from './base-handler.js';
 import { McpToolResponse } from '../types.js';
 import { z } from 'zod';
-import { cleanupTaskStore } from '../../tasks.js'; // Import the cleanup function
+import { cleanupTaskStore } from '../../tasks.js';
 
-// --- Input Schema (No parameters needed) ---
+// --- Input Schema ---
 const CleanupInputSchema = z.object({});
 
-// --- Handler Class ---
 export class CleanupTaskStoreHandler extends BaseHandler {
 
   async handle(_args: any): Promise<McpToolResponse> {
-    // 1. Validate Input (Schema is empty, so validation always passes if args is object)
     const validationResult = CleanupInputSchema.safeParse(_args || {});
     if (!validationResult.success) {
-       // Should not happen with empty schema, but include for robustness
        const errorMessage = validationResult.error.errors.map(e => e.message).join(', ');
        this.safeLog?.('error', `Internal validation error for cleanup: ${errorMessage}`);
        return { content: [{ type: 'text', text: `Internal validation error.` }], isError: true };
@@ -22,7 +19,7 @@ export class CleanupTaskStoreHandler extends BaseHandler {
     this.safeLog?.('info', `Attempting to clean up task store...`);
 
     try {
-      cleanupTaskStore(); // Call the existing cleanup function
+      cleanupTaskStore();
       const message = "Task store cleanup executed. Completed, failed, and cancelled tasks removed from the active list.";
       this.safeLog?.('info', message);
       return { content: [{ type: 'text', text: message }] };

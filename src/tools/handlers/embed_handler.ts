@@ -18,23 +18,18 @@ import { retryAsyncFunction } from '../utils/retry.js';
 import { chunkText, generateQdrantPoints } from '../utils/vectorizer.js';
 
 // --- Configuration & Constants ---
-const MAX_RETRY_ATTEMPTS = 3; // Embedding might be less prone to transient errors? Keep lower?
+const MAX_RETRY_ATTEMPTS = 3;
 const INITIAL_RETRY_DELAY_MS = 1000;
-const QDRANT_COLLECTION_NAME = 'documentation'; // Make sure this matches
+const QDRANT_COLLECTION_NAME = 'documentation';
 
-// Define LogFunction type
 type LogFunction = (level: 'error' | 'debug' | 'info' | 'notice' | 'warning' | 'critical' | 'alert' | 'emergency', data: any) => void;
 
 // --- Input Schema ---
-// Define schema for a single request (can just be the task ID)
 const SingleEmbedRequestSchema = z.string().min(1, { message: 'The task ID of the completed process stage is required.' });
-// Main input schema expects an array of process_task_ids
 const EmbedInputSchema = z.object({
     requests: z.array(SingleEmbedRequestSchema).min(1, { message: 'At least one process task ID is required.' })
 });
-// Type for the validated arguments of a single execution (just the task ID string)
 type ValidatedSingleEmbedArgs = z.infer<typeof SingleEmbedRequestSchema>;
-// Type for the overall validated input
 type ValidatedEmbedInput = z.infer<typeof EmbedInputSchema>;
 
 // Interface for data retrieved from the process task
@@ -42,8 +37,8 @@ interface ProcessTaskDetails {
     status: string;
     processedFilePath: string;
     category: string;
-    originalTopicOrUrl: string; // Keep for logging/context
-    crawlTaskId: string; // Keep for logging/context
+    originalTopicOrUrl: string;
+    crawlTaskId: string;
 }
 
 export class EmbedHandler extends BaseHandler {
@@ -61,7 +56,7 @@ export class EmbedHandler extends BaseHandler {
         let queuedCount = 0;
         let invalidCount = 0;
 
-        for (const processTaskId of requests) { // Loop through the array of process task IDs
+        for (const processTaskId of requests) {
 
             // --- Pre-check: Verify Process Task Status ---
             const processTaskStatusInfo = getTaskStatus(processTaskId);
@@ -69,23 +64,21 @@ export class EmbedHandler extends BaseHandler {
                 this.safeLog?.('warning', `Skipping embed request: Process task ${processTaskId} not found.`);
                 taskResponses.push(`Skipped: Process task ${processTaskId} not found.`);
                 invalidCount++;
-                continue; // Skip to the next request
+                continue;
             }
             if (processTaskStatusInfo.status !== 'completed') {
                  this.safeLog?.('warning', `Skipping embed request: Process task ${processTaskId} has status '${processTaskStatusInfo.status}', expected 'completed'.`);
                  taskResponses.push(`Skipped: Process task ${processTaskId} status is '${processTaskStatusInfo.status}'.`);
                  invalidCount++;
-                 continue; // Skip to the next request
+                 continue;
             }
             // --- End Pre-check ---
 
-            // Prepare args for execution/queueing (just the process task ID)
             const executionArgs: ValidatedSingleEmbedArgs = processTaskId;
 
-            const taskId = registerTask('embed'); // New task type 'embed'
+            const taskId = registerTask('embed');
             this.safeLog?.('info', `Registered embed task ${taskId} for process task: ${processTaskId}`);
 
-            // Pass the processTaskId as the argument
             const queuedTask = { taskId, args: { process_task_id: executionArgs } };
 
         if (isEmbedToolFree()) {
@@ -93,7 +86,6 @@ export class EmbedHandler extends BaseHandler {
                 this.safeLog?.('info', `[${taskId}] Acquired embed tool lock. Starting execution immediately.`);
                 setTaskStatus(taskId, 'running');
                 updateTaskDetails(taskId, 'Starting embedding and indexing stage...');
-                    // Pass the single arg object to _executeEmbed
                     this._executeEmbed(taskId, { process_task_id: executionArgs });
                     taskResponses.push(`Task ${taskId} started for process task "${processTaskId}".`);
                     startedCount++;
@@ -113,13 +105,12 @@ export class EmbedHandler extends BaseHandler {
                 taskResponses.push(`Task ${taskId} queued (Position: ${position}) for process task "${processTaskId}".`);
                 queuedCount++;
             }
-        } // End loop
+        }
 
         const summary = `Processed ${requests.length} embed requests. Started: ${startedCount}, Queued: ${queuedCount}, Invalid/Skipped: ${invalidCount}.\nTask details:\n${taskResponses.join('\n')}`;
         return { content: [{ type: 'text', text: summary }] };
     }
 
-    // _executeEmbed still accepts the object format internally
     private async _executeEmbed(taskId: string, args: { process_task_id: string }): Promise<void> {
         let stageSucceeded = false;
         let processDetails: ProcessTaskDetails | null = null;
@@ -144,9 +135,8 @@ export class EmbedHandler extends BaseHandler {
             }
             processedFilePath = processDetails.processedFilePath;
             category = processDetails.category;
-            const originalTopicOrUrl = processDetails.originalTopicOrUrl; // For logging
+            const originalTopicOrUrl = processDetails.originalTopicOrUrl;
             updateTaskDetails(taskId, `Starting embedding for file: ${processedFilePath} (Category: ${category})`);
-            // --- End Retrieve Details ---
 
             // Wrap embedding & indexing in retry logic
             await retryAsyncFunction(
@@ -156,16 +146,15 @@ export class EmbedHandler extends BaseHandler {
 
                     // --- Acquire Shared Embedding Resource Lock ---
                     if (!acquireEmbeddingLock()) {
-                        // Treat lock failure as retriable
                         this.safeLog?.('warning', `[${taskId}] Failed to acquire shared embedding lock. Retrying...`);
                         throw new Error("Could not acquire embedding resource lock. System busy?");
                     }
                     this.safeLog?.('debug', `[${taskId}] Acquired shared embedding lock.`);
-                    let embeddingLockReleased = false; // Flag to ensure release
+                    let embeddingLockReleased = false;
                     // --- End Acquire Lock ---
 
-                    try { // Add try block for lock release
-                        await this.apiClient.initCollection(QDRANT_COLLECTION_NAME); // Ensure collection exists
+                    try {
+                        await this.apiClient.initCollection(QDRANT_COLLECTION_NAME);
 
                         updateTaskDetails(taskId, `Reading processed file: ${processedFilePath}`);
                     const fileContent = await fs.readFile(processedFilePath, 'utf-8');
@@ -175,22 +164,19 @@ export class EmbedHandler extends BaseHandler {
 
                     if (chunks.length === 0) {
                         this.safeLog?.('warning', `[${taskId}] No text chunks generated from ${processedFilePath}. Skipping embedding.`);
-                        // Consider this a success for the stage, as there's nothing to embed
-                        return; // Exit retry function successfully
+                        return;
                     }
 
                     updateTaskDetails(taskId, `Generating embeddings for ${chunks.length} chunks...`);
-                    // generateQdrantPoints handles its own progress updates via updateTaskDetails
                     const points: QdrantPoint[] = await generateQdrantPoints(
                         chunks,
-                        processedFilePath, // Use processed file path as the source identifier
+                        processedFilePath,
                         category,
                         this.apiClient,
                         this.safeLog,
-                        taskId // Pass embed task ID for cancellation checks and progress updates
+                        taskId
                     );
 
-                    // Check cancellation again after potentially long embedding step
                     if (isTaskCancelled(taskId)) throw new McpError(ErrorCode.InternalError, `Task ${taskId} cancelled.`);
 
                     if (points.length > 0) {
@@ -199,10 +185,8 @@ export class EmbedHandler extends BaseHandler {
                         this.safeLog?.('info', `[${taskId}] Successfully embedded and indexed: ${processedFilePath}`);
                     } else {
                         this.safeLog?.('warning', `[${taskId}] No vector points generated for ${processedFilePath} after embedding attempt. Check content and embedding process.`);
-                        // Consider this a success for the stage, as there were no points to upsert
                     }
-                    } finally { // Add finally block for lock release
-                        // Ensure lock is always released after an attempt, even if errors occur
+                    } finally {
                         if (!embeddingLockReleased) {
                             releaseEmbeddingLock();
                             embeddingLockReleased = true;
@@ -217,16 +201,13 @@ export class EmbedHandler extends BaseHandler {
                 taskId
             );
 
-            // If retry block succeeded (or completed with warnings like 0 chunks/points)
-            // Check cancellation one last time before marking completed
             if (isTaskCancelled(taskId)) {
                  this.safeLog?.('info', `[${taskId}] Embed task cancelled after successful embedding/indexing.`);
                  setTaskStatus(taskId, 'cancelled');
                  updateTaskDetails(taskId, 'Embedding/Indexing completed but task was cancelled.');
-                 return; // Exit early
+                 return;
             }
 
-            // --- Final Success ---
             const finalDetails = {
                 status: 'Embed Complete',
                 indexedFilePath: processedFilePath,

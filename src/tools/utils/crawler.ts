@@ -122,7 +122,7 @@ export async function crawlWebsite(
             const page = await apiClient.browser.newPage();
             try {
                 safeLog?.('debug', `[${taskId}] Crawling: ${current.url} at depth ${current.depth}`);
-                await page.goto(current.url, { waitUntil: 'domcontentloaded', timeout: 30000 }); // Shorter timeout?
+                await page.goto(current.url, { waitUntil: 'domcontentloaded', timeout: 30000 });
                 const content = await page.content();
                 const links = _extractLinksFromHtml(content, current.url, sourceUrlObj, safeLog);
 

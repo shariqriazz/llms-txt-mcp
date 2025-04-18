@@ -3,7 +3,7 @@ import fs from 'fs/promises';
 import path from 'path';
 
 // --- Persistence ---
-const TASK_STORE_FILE = path.join(process.cwd(), '.task_store.json'); // Store in workspace root
+const TASK_STORE_FILE = path.join(process.cwd(), '.task_store.json');
 
 // Define the structure for storing task information
 export type TaskStatusValue = 'queued' | 'running' | 'cancelled' | 'completed' | 'failed'; // Added 'queued'
@@ -13,7 +13,6 @@ export interface TaskInfo {
   details: string;
   startTime: number; // Store as timestamp (Date.now())
   endTime: number | null; // Store as timestamp or null
-  // discoveredUrls removed - will be stored in a separate file referenced in details JSON
   progressCurrent?: number; // Optional: Current progress unit (e.g., 7)
   progressTotal?: number;   // Optional: Total progress units (e.g., 10)
 }
@@ -21,14 +20,13 @@ export interface TaskInfo {
 // Updated in-memory store for detailed task information
 // Key: taskId (string)
 // Value: TaskInfo object
-let taskStore = new Map<string, TaskInfo>(); // Use let to allow reassignment on load
+let taskStore = new Map<string, TaskInfo>();
 
 // --- Persistence Functions ---
 async function saveTaskStoreToFile(): Promise<void> {
     try {
         const dataToSave = JSON.stringify(Array.from(taskStore.entries()));
         await fs.writeFile(TASK_STORE_FILE, dataToSave, 'utf-8');
-        // console.error(`[DEBUG] Task store saved to ${TASK_STORE_FILE}`);
     } catch (error) {
         console.error(`[ERROR] Failed to save task store: ${error}`);
     }
@@ -65,14 +63,14 @@ export function registerTask(prefix: string = 'task'): string {
   const taskId = `${prefix}-${uuidv4()}`;
   const now = Date.now();
   const initialInfo: TaskInfo = {
-    status: 'running', // Default to running, handler might change to queued immediately
+    status: 'running',
     details: 'Initializing...',
     startTime: now,
     endTime: null,
   };
   taskStore.set(taskId, initialInfo);
-  console.error(`[INFO] Registered new task: ${taskId}`); // Log registration
-  saveTaskStoreToFile(); // Save after adding
+  console.error(`[INFO] Registered new task: ${taskId}`);
+  saveTaskStoreToFile();
   return taskId;
 }
 
@@ -84,7 +82,6 @@ export function setTaskStatus(taskId: string, status: TaskStatusValue): void {
   if (taskInfo) {
     taskInfo.status = status;
     // Set end time only if it's a final state and not already set
-    // Set end time only if it's a final state and not already set
     const isFinalState = status === 'completed' || status === 'failed' || status === 'cancelled';
     if (isFinalState && taskInfo.endTime === null) {
       taskInfo.endTime = Date.now();
@@ -94,8 +91,8 @@ export function setTaskStatus(taskId: string, status: TaskStatusValue): void {
         // Ensure endTime is null if transitioning back to a non-final state (e.g., queued -> running)
         taskInfo.endTime = null;
     }
-    console.error(`[INFO] Updated task ${taskId} status to: ${status}`); // Log status change
-    saveTaskStoreToFile(); // Save after status change
+    console.error(`[INFO] Updated task ${taskId} status to: ${status}`);
+    saveTaskStoreToFile();
   } else {
     console.error(`[WARN] Attempted to set status for unknown task ID: ${taskId}`);
   }
@@ -107,7 +104,6 @@ export function setTaskStatus(taskId: string, status: TaskStatusValue): void {
  */
 export function updateTaskDetails(taskId: string, details: string): void {
     const taskInfo = taskStore.get(taskId);
-    // Only update details if running
     if (taskInfo && taskInfo.status === 'running') {
         taskInfo.details = details;
 
@@ -121,43 +117,23 @@ export function updateTaskDetails(taskId: string, details: string): void {
             if (!isNaN(current) && !isNaN(total) && total > 0) {
                 taskInfo.progressCurrent = current;
                 taskInfo.progressTotal = total;
-                // console.error(`[DEBUG] Task ${taskId} progress: ${current}/${total}`); // Optional debug log
             } else {
-                // Invalid numbers parsed, clear progress
                 taskInfo.progressCurrent = undefined;
                 taskInfo.progressTotal = undefined;
             }
         } else {
-            // No progress pattern found, clear progress fields
             taskInfo.progressCurrent = undefined;
             taskInfo.progressTotal = undefined;
         }
-        // console.error(`[DEBUG] Updated task ${taskId} details: ${details}`); // Optional debug log
-        saveTaskStoreToFile(); // Save after details update
+        saveTaskStoreToFile();
     } else if (taskInfo && taskInfo.status !== 'running') {
          // Allow updating details even if not running, e.g., setting final error message before setting status to failed/cancelled
-         // console.error(`[WARN] Attempted to update details for task ${taskId} which is not running (status: ${taskInfo.status}). Details ignored.`);
-         taskInfo.details = details; // Allow update
-         saveTaskStoreToFile(); // Save after details update
+         taskInfo.details = details;
+         saveTaskStoreToFile();
     } else {
         console.error(`[WARN] Attempted to update details for unknown task ID: ${taskId}`);
     }
 }
-
-/**
- * Updates the discoveredUrls list for a specific task.
- * @deprecated discoveredUrls are now stored in a separate file referenced in task details JSON.
- */
-// export function setDiscoveredUrls(taskId: string, urls: string[]): void {
-//     const taskInfo = taskStore.get(taskId);
-//     if (taskInfo) {
-//         // taskInfo.discoveredUrls = urls; // Removed
-//         // saveTaskStoreToFile(); // Save after setting URLs
-//     } else {
-//         console.error(`[WARN] Attempted to set discoveredUrls for unknown task ID: ${taskId}`);
-//     }
-// }
-
 
 /**
  * Retrieves the detailed information object for a task.
@@ -182,7 +158,7 @@ export function isTaskCancelled(taskId: string): boolean {
  */
 export function getAllTasks(prefix?: string): Map<string, TaskInfo> {
   if (!prefix) {
-    return new Map(taskStore); // Return a copy of the full map
+    return new Map(taskStore);
   }
   const filteredTasks = new Map<string, TaskInfo>();
   for (const [taskId, taskInfo] of taskStore.entries()) {
@@ -200,7 +176,6 @@ export function getAllTasks(prefix?: string): Map<string, TaskInfo> {
 export function cleanupTaskStore(): void {
     let cleanedCount = 0;
     for (const [taskId, taskInfo] of taskStore.entries()) {
-        // Check the status property of the TaskInfo object
         // Check the status property of the TaskInfo object - clean up non-running AND non-queued tasks
         if (taskInfo.status !== 'running' && taskInfo.status !== 'queued') {
             taskStore.delete(taskId);
@@ -208,17 +183,12 @@ export function cleanupTaskStore(): void {
         }
     }
     if (cleanedCount > 0) {
-        console.error(`[INFO] Cleaned up ${cleanedCount} finished tasks from store.`); // Changed log level
-        saveTaskStoreToFile(); // Save after cleanup
+        console.error(`[INFO] Cleaned up ${cleanedCount} finished tasks from store.`);
+        saveTaskStoreToFile();
     }
 }
 
-// Optional: Set up a periodic cleanup
-// setInterval(cleanupTaskStore, 60 * 60 * 1000); // Clean up every hour
-
 // --- Initial Load ---
-// Load existing tasks when the module is first loaded.
-// Use a top-level await or an immediately invoked async function.
 (async () => {
     await loadTaskStoreFromFile();
 })();

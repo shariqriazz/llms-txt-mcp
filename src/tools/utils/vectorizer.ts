@@ -56,7 +56,7 @@ export async function generateQdrantPoints(
     taskId?: string // Add taskId as an optional parameter
 ): Promise<QdrantPoint[]> {
     const points: QdrantPoint[] = [];
-    const totalChunks = chunks.length; // Get total count before loop
+    const totalChunks = chunks.length;
 
     for (let i = 0; i < totalChunks; i++) {
         const chunk = chunks[i];
@@ -78,8 +78,6 @@ export async function generateQdrantPoints(
             });
         } catch (error: any) {
             safeLog?.('error', `Failed to generate embedding for chunk ${i} from ${sourceIdentifier}: ${error.message}`);
-            // Decide on error handling: skip chunk, retry, or throw?
-            // For now, skipping the chunk on embedding failure.
         }
     }
     return points;

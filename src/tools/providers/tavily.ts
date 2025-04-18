@@ -57,13 +57,13 @@ export interface TavilyResponse { // Export interface
   answer?: string;
   images?: Array<string | { url: string; description?: string; }>;
   results: Array<TavilySearchResult>;
-  response_time?: number; // Added based on API docs
+  response_time?: number;
 }
 
 // --- Tool Definitions ---
 // Note: Schemas are copied directly from the initial prompt's description of tavily-mcp
 const TAVILY_SEARCH_TOOL: Tool = {
-    name: "tavily_search", // Renamed
+    name: "tavily_search",
     description: "A powerful web search tool that provides comprehensive, real-time results using Tavily's AI search engine. Returns relevant web content with customizable parameters for result count, content type, and domain filtering. Ideal for gathering current information, news, and detailed web content analysis.",
     inputSchema: {
         type: "object",
@@ -85,7 +85,7 @@ const TAVILY_SEARCH_TOOL: Tool = {
 };
 
 const TAVILY_EXTRACT_TOOL: Tool = {
-    name: "tavily_extract", // Renamed
+    name: "tavily_extract",
     description: "A powerful web content extraction tool that retrieves and processes raw content from specified URLs, ideal for data collection, content analysis, and research tasks.",
     inputSchema: {
         type: "object",
@@ -117,7 +117,7 @@ export async function performTavilySearch(params: any): Promise<TavilyResponse> 
         if (error.response?.status === 401) throw new Error('Tavily API Error: Invalid API key');
         if (error.response?.status === 429) throw new Error('Tavily API Error: Usage limit exceeded');
         if (error.response?.data?.error) throw new Error(`Tavily API Error: ${error.response.data.error}`);
-        throw error; // Re-throw other errors
+        throw error;
     }
 }
 
@@ -138,7 +138,7 @@ async function performTavilyExtract(params: any): Promise<TavilyExtractResponse>
         if (error.response?.status === 401) throw new Error('Tavily API Error: Invalid API key');
         if (error.response?.status === 429) throw new Error('Tavily API Error: Usage limit exceeded');
          if (error.response?.data?.error) throw new Error(`Tavily API Error: ${error.response.data.error}`);
-        throw error; // Re-throw other errors
+        throw error;
     }
 }
 
@@ -230,7 +230,7 @@ Result ${index + 1}:`);
 export function registerTavilyTools(
     tools: Tool[],
     handlers: Map<string, (args: any) => Promise<any>>,
-    safeLog: (level: 'error' | 'debug' | 'info' | 'notice' | 'warning' | 'critical' | 'alert' | 'emergency', data: any) => void // Corrected type
+    safeLog: (level: 'error' | 'debug' | 'info' | 'notice' | 'warning' | 'critical' | 'alert' | 'emergency', data: any) => void
 ): void {
     if (!TAVILY_API_KEY) {
         safeLog('warning', 'Skipping Tavily tool registration: TAVILY_API_KEY not set.');
@@ -249,7 +249,7 @@ export function registerTavilyTools(
         safeLog('info', `Executing ${TAVILY_EXTRACT_TOOL.name} for URLs: ${args.urls?.join(', ')}`);
          // Assuming extract returns a similar structure for formatting
         const results = await performTavilyExtract(args);
-        return { content: [{ type: "text", text: formatTavilyExtractResults(results) }] }; // Use the correct formatting function
+        return { content: [{ type: "text", text: formatTavilyExtractResults(results) }] };
     });
 
     safeLog('debug', 'Tavily tools registered.');

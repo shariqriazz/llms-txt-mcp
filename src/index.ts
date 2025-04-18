@@ -15,8 +15,6 @@ import dotenv from "dotenv";
 dotenv.config();
 
 // Import tool registration functions
-// Removed Brave/Exa: import { registerBraveTools, checkBraveConfig } from "./tools/providers/brave.js";
-// Removed Brave/Exa: import { registerExaTools, checkExaConfig } from "./tools/providers/exa.js";
 import { registerTavilyTools, checkTavilyConfig } from "./tools/providers/tavily.js";
 // Import apiClient as well
 import { registerLlmsFullTools, checkLlmsFullConfig, apiClient } from "./tools/providers/llms-full.js";
@@ -24,16 +22,14 @@ import { registerLlmsFullTools, checkLlmsFullConfig, apiClient } from "./tools/p
 // --- Configuration Check ---
 // Check if required API keys are present, log warnings if not.
 // The server will still run, but tools requiring missing keys will fail.
-// Removed Brave/Exa: checkBraveConfig();
-// Removed Brave/Exa: checkExaConfig();
 checkTavilyConfig();
-checkLlmsFullConfig(safeLog); // Added RAGDocs config check, pass safeLog if needed by check
+checkLlmsFullConfig(safeLog);
 
 // --- Server Initialization ---
 const server = new Server(
   {
-    name: "llms-full-mcp", // Simplified server name
-    version: "1.1.0", // Bump version for changes
+    name: "llms-full-mcp",
+    version: "1.1.0",
   },
   {
     capabilities: {
@@ -64,10 +60,7 @@ const toolHandlers: Map<string, (args: any) => Promise<any>> = new Map();
 // --- Server Startup ---
 async function runServer() {
   try {
-    // console.error("Initializing Unified Search/Scrape MCP Server..."); // Reduced startup noise
     const transport = new StdioServerTransport();
-
-    // No need to detect isStdioTransport anymore, safeLog always uses console.error
 
     await server.connect(transport);
 
@@ -77,10 +70,8 @@ async function runServer() {
     toolHandlers.clear();
 
     // Populate tools and handlers
-    // Removed Brave/Exa: registerBraveTools(allTools, toolHandlers, safeLog);
-    // Removed Brave/Exa: registerExaTools(allTools, toolHandlers, safeLog);
     registerTavilyTools(allTools, toolHandlers, safeLog);
-    registerLlmsFullTools(allTools, toolHandlers, safeLog); // Added RAGDocs registration
+    registerLlmsFullTools(allTools, toolHandlers, safeLog);
 
     // --- Setup Request Handlers (After Connection & Tool Registration) ---
     setupRequestHandlers(server, allTools, toolHandlers, safeLog);
@@ -88,10 +79,10 @@ async function runServer() {
 
     // Now that we're connected and handlers are set, log success
     // Log initialization success via console.error as well
-    console.error(`llms-full MCP Server initialized successfully with ${allTools.length} tools.`); // Simplified log message
-    console.error("llms-full MCP Server running on stdio."); // Simplified log message
-} catch (error) {
-  console.error("Fatal error running server:", error);
+    console.error(`llms-full MCP Server initialized successfully with ${allTools.length} tools.`);
+    console.error("llms-full MCP Server running on stdio.");
+  } catch (error) {
+    console.error("Fatal error running server:", error);
   process.exit(1);
 }
 }
@@ -102,13 +93,10 @@ function setupRequestHandlers(
   server: Server,
   allTools: Tool[],
   toolHandlers: Map<string, (args: any) => Promise<any>>,
-  safeLog: (level: 'error' | 'debug' | 'info' | 'notice' | 'warning' | 'critical' | 'alert' | 'emergency', data: any) => void // Corrected type
+  safeLog: (level: 'error' | 'debug' | 'info' | 'notice' | 'warning' | 'critical' | 'alert' | 'emergency', data: any) => void
 ) {
   server.setRequestHandler(ListToolsRequestSchema, async () => {
-    // safeLog('debug', 'Received ListTools request'); // Removed DEBUG log
-    // safeLog('debug', `Attempting to return ${allTools.length} tools.`); // Removed DEBUG log
     const response = { tools: allTools }; // Access global allTools
-    // safeLog('debug', 'ListTools response prepared.'); // Removed DEBUG log
     return response;
   });
 
@@ -135,7 +123,7 @@ function setupRequestHandlers(
           return { content: [{ type: 'text', text: result.trim() }] }; // Trim result
       } else if (result && Array.isArray(result.content)) {
            // Ensure text content is trimmed
-          result.content = result.content.map((part: any) => // Added type for part
+          result.content = result.content.map((part: any) =>
               part.type === 'text' ? { ...part, text: part.text?.trim() ?? '' } : part
           );
           return result;
@@ -161,7 +149,6 @@ function setupRequestHandlers(
     }
   });
 }
-// Removed extra closing brace
 
 // --- Graceful Shutdown ---
 process.on('SIGINT', async () => {

@@ -7,7 +7,6 @@ import * as cheerio from 'cheerio';
 import { ApiClient } from '../api-client.js'; // Need ApiClient for browser access
 import * as PipelineState from '../../pipeline_state.js'; // Need for browser lock
 
-// Define LogFunction type (or import if shared)
 type LogFunction = (level: 'error' | 'debug' | 'info' | 'notice' | 'warning' | 'critical' | 'alert' | 'emergency', data: any) => void;
 
 /**
@@ -69,7 +68,6 @@ export async function extractTextContent(
 
       // Acquire browser lock specifically for this scraping operation
       if (!PipelineState.acquireBrowserLock()) {
-          // If lock fails, maybe wait/retry? For now, throw.
           safeLog?.('warning', `Failed to acquire browser lock for ${sourceUrlOrPath}. Retrying might be needed.`);
           throw new Error("Could not acquire browser lock for URL content extraction.");
       }
@@ -80,10 +78,8 @@ export async function extractTextContent(
         await page.goto(sourceUrlOrPath, { waitUntil: 'domcontentloaded', timeout: 60000 });
         const pageContent = await page.content();
         const $ = cheerio.load(pageContent);
-        // A more robust extraction might target specific elements like <main>, <article>, etc.
-        // For now, keeping the simple body text extraction.
         extractedText = $('body').text();
-        extractedText = extractedText.replace(/\s\s+/g, ' ').trim(); // Clean up whitespace
+        extractedText = extractedText.replace(/\s\s+/g, ' ').trim();
       } finally {
         await page.close();
         PipelineState.releaseBrowserLock(); // Release browser lock after scraping
@@ -92,7 +88,6 @@ export async function extractTextContent(
     }
 
     if (!extractedText || extractedText.trim().length === 0) {
-      // Consider logging a warning instead of throwing if empty content is acceptable sometimes
       throw new Error(`No text content extracted from ${sourceUrlOrPath}`);
     }
     return extractedText;

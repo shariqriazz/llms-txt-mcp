@@ -11,7 +11,6 @@ import { URL } from 'url'; // Ensure URL is imported
 // Import Tavily search function and types (adjust path as necessary)
 import { performTavilySearch, TavilyResponse, TavilySearchResult } from '../providers/tavily.js'; // Updated path
 
-// Get current directory in ES modules
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const QUEUE_FILE = path.join(__dirname, '..', 'queue.txt'); // Go up one level from handlers
@@ -20,10 +19,9 @@ const QUEUE_FILE = path.join(__dirname, '..', 'queue.txt'); // Go up one level f
 const ExtractUrlsSchema = z.object({
   url: z.string().url({ message: 'Valid URL is required' }),
   add_to_queue: z.boolean().optional().default(false),
-  maxDepth: z.number().int().min(0).optional().default(1), // Add maxDepth
+  maxDepth: z.number().int().min(0).optional().default(1),
 });
 
-// Infer the type from the schema
 type ExtractUrlsArgs = z.infer<typeof ExtractUrlsSchema>;
 
 export class UtilExtractUrlsHandler extends BaseHandler {
@@ -160,7 +158,7 @@ export class UtilExtractUrlsHandler extends BaseHandler {
 
             if (searchResponse.results && searchResponse.results.length > 0) {
                 this.safeLog?.('debug', `Found ${searchResponse.results.length} search results.`);
-                searchResponse.results.forEach((result: TavilySearchResult) => { // Add type annotation
+                searchResponse.results.forEach((result: TavilySearchResult) => {
                     if (result.url) {
                         try {
                            // Basic validation and normalization before adding
@@ -203,7 +201,6 @@ export class UtilExtractUrlsHandler extends BaseHandler {
         }
       });
 
-       // Deduplicate again just in case (though Set should handle most)
        const uniqueFinalUrls = Array.from(new Set(finalUrlArray));
 
       this.safeLog?.('info', `Final filtered URL count: ${uniqueFinalUrls.length}`);

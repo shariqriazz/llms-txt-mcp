@@ -6,16 +6,14 @@ import { Schemas } from '@qdrant/js-client-rest'; // Import Qdrant Schemas
 
 const COLLECTION_NAME = 'documentation';
 
-// Define the input schema using Zod
 const SearchDocumentationInputSchema = z.object({
   query: z.string().min(1, { message: 'Query is required.' }),
-  limit: z.coerce.number().int().min(1).max(20).optional().default(5), // Coerce to number
-  url_pattern: z.string().optional(), // Add optional url_pattern
-  score_threshold: z.coerce.number().min(0.0).max(1.0).optional().default(0.55), // Updated default score_threshold
-  category: z.string().or(z.array(z.string())).optional(), // Allow string or array
+  limit: z.coerce.number().int().min(1).max(20).optional().default(5),
+  url_pattern: z.string().optional(),
+  score_threshold: z.coerce.number().min(0.0).max(1.0).optional().default(0.55),
+  category: z.string().or(z.array(z.string())).optional(),
 });
 
-// Helper function for simple wildcard matching (* only)
 function wildcardMatch(pattern: string, text: string): boolean {
   // Basic escape for regex chars, then replace * with .*
   const regexPattern = pattern
@@ -32,7 +30,6 @@ function wildcardMatch(pattern: string, text: string): boolean {
 
 export class VectorStoreSearchHandler extends BaseHandler {
   async handle(args: any): Promise<McpToolResponse> {
-    // Validate input using the Zod schema
     const validationResult = SearchDocumentationInputSchema.safeParse(args);
     if (!validationResult.success) {
       const errorMessage = validationResult.error.errors.map(e => e.message).join(', ');
@@ -42,11 +39,9 @@ export class VectorStoreSearchHandler extends BaseHandler {
     const { query, limit, url_pattern, score_threshold, category } = validationResult.data;
 
     try {
-      // Generate embedding for the query
       const queryEmbedding = await this.apiClient.getEmbeddings(query);
       this.safeLog?.('debug', `Generated query embedding (first 5 dims): [${queryEmbedding.slice(0, 5).join(', ')}]`);
 
-      // Build filter based on category, if provided
       let filter: Schemas['Filter'] | undefined = undefined;
       if (category && category.length > 0) {
         if (Array.isArray(category)) {
@@ -70,7 +65,6 @@ export class VectorStoreSearchHandler extends BaseHandler {
         }
       }
 
-      // Prepare search parameters for Qdrant
       const searchParams = {
         filter,
         vector: queryEmbedding,
@@ -81,10 +75,8 @@ export class VectorStoreSearchHandler extends BaseHandler {
       };
       this.safeLog?.('debug', `Qdrant search params: ${JSON.stringify(searchParams)}`);
 
-      // Perform the search
       let searchResults = await this.apiClient.qdrantClient.search(COLLECTION_NAME, searchParams);
 
-      // Post-filter results by url_pattern if provided (client-side filtering)
       if (url_pattern && url_pattern.trim() !== '') {
         const trimmedPattern = url_pattern.trim();
         this.safeLog?.('debug', `Filtering search results with URL pattern: ${trimmedPattern}`);
@@ -98,7 +90,6 @@ export class VectorStoreSearchHandler extends BaseHandler {
         this.safeLog?.('debug', `Found ${searchResults.length} results after URL pattern filtering.`);
       }
 
-      // Format the results
       const formattedResults = searchResults.map(result => {
         if (!isDocumentPayload(result.payload)) {
           this.safeLog?.('warning', `Skipping result with invalid payload: ID ${result.id}`);
@@ -116,7 +107,6 @@ export class VectorStoreSearchHandler extends BaseHandler {
         ],
       };
     } catch (error) {
-      // Error Handling
       if (error instanceof Error) {
         if (error.message.includes('unauthorized')) {
           throw new McpError(ErrorCode.InvalidRequest, 'Failed to authenticate with Qdrant cloud while searching');

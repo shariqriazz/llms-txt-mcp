@@ -1,7 +1,6 @@
 import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
-import { isTaskCancelled } from '../../tasks.js'; // Assuming tasks.ts is two levels up
+import { isTaskCancelled } from '../../tasks.js';
 
-// Define LogFunction type (Consider moving to a more central types file if used widely)
 type LogFunction = (level: 'error' | 'debug' | 'info' | 'notice' | 'warning' | 'critical' | 'alert' | 'emergency', data: any) => void;
 
 /**
@@ -27,18 +26,14 @@ export async function retryAsyncFunction<T>(
     let attempts = 0;
     while (attempts < maxAttempts) {
         try {
-            // Check for cancellation before starting the attempt
             if (taskId && isTaskCancelled(taskId)) {
                  safeLog?.('info', `[${taskId}] Task cancelled before starting/retrying ${taskDescription}.`);
                  throw new McpError(ErrorCode.InternalError, `Task ${taskId} cancelled.`);
             }
-            // Attempt the function
             return await fn();
         } catch (error: any) {
-            // Check for cancellation immediately after an error
             if (taskId && isTaskCancelled(taskId)) {
                  safeLog?.('info', `[${taskId}] Task cancelled during ${taskDescription} attempt ${attempts + 1}.`);
-                 // Re-throw cancellation error, preserving original if it was also cancellation
                  throw error instanceof McpError && error.message.includes('cancelled')
                    ? error
                    : new McpError(ErrorCode.InternalError, `Task ${taskId} cancelled during operation.`);
@@ -47,22 +42,16 @@ export async function retryAsyncFunction<T>(
             attempts++;
             safeLog?.('warning', `[${taskId || 'Retry'}] Attempt ${attempts}/${maxAttempts} failed for ${taskDescription}: ${error.message}`);
 
-            // Check if the error is an McpError and if its code indicates a non-retriable issue
-            // We generally retry InternalError (-32603) and potentially others,
-            // but not client-side errors like InvalidParams (-32602) or MethodNotFound (-32601)
-            // or specific internal errors that shouldn't be retried.
             if (error instanceof McpError && error.code !== ErrorCode.InternalError) {
                  safeLog?.('error', `[${taskId || 'Retry'}] Non-retriable MCP error encountered for ${taskDescription}. Aborting retries.`);
                  throw error;
             }
 
-            // Check if max attempts reached
             if (attempts >= maxAttempts) {
                 safeLog?.('error', `[${taskId || 'Retry'}] All ${maxAttempts} attempts failed for ${taskDescription}.`);
-                throw error; // Throw the last error encountered
+                throw error;
             }
 
-            // Calculate delay with exponential backoff and jitter
             const delayTime = initialDelayMs * Math.pow(2, attempts - 1);
             const jitter = delayTime * 0.2 * Math.random(); // Add up to 20% jitter
             const waitTime = Math.round(delayTime + jitter);

@@ -31,7 +31,6 @@ export class GetTaskDetailsHandler extends BaseHandler {
             content: [{ type: 'text', text: `Task ${taskId} not found.` }],
             isError: true // Indicate this is an error response
         };
-        // Alternatively, throw: throw new McpError(ErrorCode.InvalidParams, `Task ${taskId} not found.`);
     }
 
     // Return the details string directly

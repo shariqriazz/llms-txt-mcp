@@ -12,13 +12,12 @@ const DetailLevelEnum = z.enum(['simple', 'detailed']).optional().default('simpl
 const GetTaskStatusInputSchema = z.object({
   taskId: z.string().min(1).optional().describe('The ID of the specific task to get status for.'),
   taskType: TaskTypeEnum,
-  detail_level: DetailLevelEnum, // Added detail_level parameter
+  detail_level: DetailLevelEnum,
 });
 type ValidatedGetStatusArgs = z.infer<typeof GetTaskStatusInputSchema>;
 
 
 // --- Helper Function for ETA ---
-// (Copied from previous handler, consider moving to a shared utility if used elsewhere)
 function calculateAndAddEta(taskInfo: TaskInfo): void {
     if (
         taskInfo.status === 'running' &&
@@ -40,7 +39,6 @@ function calculateAndAddEta(taskInfo: TaskInfo): void {
             }
         }
     }
-    // If conditions aren't met, etaTimestamp will not be added
 }
 
 
@@ -53,32 +51,26 @@ export class GetTaskStatusHandler extends BaseHandler {
       const errorMessage = validationResult.error.errors.map(e => e.message).join(', ');
       throw new McpError(ErrorCode.InvalidParams, `Invalid input: ${errorMessage}`);
     }
-    // Destructure all validated args
     const { taskId, taskType, detail_level } = validationResult.data;
 
-    let resultObject: any; // Use 'any' for flexibility in return type
+    let resultObject: any;
 
     if (taskId) {
       // --- Get Specific Task Status ---
       const taskInfo = getTaskStatus(taskId);
       if (taskInfo) {
-        // Create a copy to modify for 'simple' view
         const outputInfo = { ...taskInfo };
-        calculateAndAddEta(outputInfo); // Calculate and add ETA to the copy
+        calculateAndAddEta(outputInfo);
 
-        // Simplify output if requested
         if (detail_level === 'simple') {
-            delete (outputInfo as any).discoveredUrls; // Remove potentially large URL list
-            // Optionally simplify the details string if it's JSON
+            delete (outputInfo as any).discoveredUrls;
             try {
                 const parsedDetails = JSON.parse(outputInfo.details);
                 if (parsedDetails && typeof parsedDetails === 'object' && parsedDetails.message) {
-                    outputInfo.details = parsedDetails.message; // Keep only the message part
+                    outputInfo.details = parsedDetails.message;
                 } else if (parsedDetails && typeof parsedDetails === 'object' && parsedDetails.status) {
-                    // Fallback if no message but status exists in JSON
                     outputInfo.details = parsedDetails.status;
                 }
-                // If parsing fails or expected fields aren't there, keep the original details string
             } catch (e) { /* Ignore parsing errors, keep original details */ }
         }
         resultObject = outputInfo;
@@ -90,7 +82,7 @@ export class GetTaskStatusHandler extends BaseHandler {
     } else {
       // --- Get All Tasks (Potentially Filtered) ---
       this.safeLog?.('info', `Retrieving status for ${taskType} tasks.`);
-      const allTasks = getAllTasks(); // Get all tasks first
+      const allTasks = getAllTasks();
       const filteredTasks: { [key: string]: any } = {};
       let filterPrefix = '';
 
@@ -99,20 +91,17 @@ export class GetTaskStatusHandler extends BaseHandler {
           case 'process': filterPrefix = 'process-'; break;
           case 'embed': filterPrefix = 'embed-'; break;
           case 'all':
-          default: filterPrefix = ''; break; // No prefix means get all
+          default: filterPrefix = ''; break;
       }
 
       let count = 0;
       for (const [id, info] of allTasks.entries()) {
           if (filterPrefix === '' || id.startsWith(filterPrefix)) {
-              // Create a copy to modify for 'simple' view
               const outputInfo = { ...info };
-              calculateAndAddEta(outputInfo); // Calculate and add ETA to the copy
+              calculateAndAddEta(outputInfo);
 
-              // Simplify output if requested
               if (detail_level === 'simple') {
                   delete (outputInfo as any).discoveredUrls;
-                  // Optionally simplify the details string if it's JSON
                   try {
                       const parsedDetails = JSON.parse(outputInfo.details);
                       if (parsedDetails && typeof parsedDetails === 'object' && parsedDetails.message) {
@@ -131,12 +120,11 @@ export class GetTaskStatusHandler extends BaseHandler {
       this.safeLog?.('info', `Found ${count} tasks matching filter '${taskType}'.`);
     }
 
-    // Return stringified JSON
     return {
       content: [
         {
-          type: 'text', // Return as stringified JSON text
-          text: JSON.stringify(resultObject, null, 2), // Pretty print JSON
+          type: 'text',
+          text: JSON.stringify(resultObject, null, 2),
         },
       ],
     };

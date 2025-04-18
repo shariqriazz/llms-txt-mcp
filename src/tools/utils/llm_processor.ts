@@ -4,9 +4,8 @@ import { ApiClient } from '../api-client.js';
 import { extractTextContent as extractContentUtil } from './content_extractor.js'; // Import extractor util
 import { isTaskCancelled, updateTaskDetails } from '../../tasks.js';
 import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
-import { acquireBrowserLock, releaseBrowserLock } from '../../pipeline_state.js'; // Import browser lock functions
+import { acquireBrowserLock, releaseBrowserLock } from '../../pipeline_state.js';
 
-// Define LogFunction type (or import if shared)
 type LogFunction = (level: 'error' | 'debug' | 'info' | 'notice' | 'warning' | 'critical' | 'alert' | 'emergency', data: any) => void;
 
 // Configuration from Environment Variables
@@ -35,8 +34,7 @@ export async function processSourcesWithLlm(
     safeLog?: LogFunction
 ): Promise<string> {
 
-    // Provider-specific checks and setup
-    let llmClient: any; // Use 'any' for simplicity, or create a common interface
+    let llmClient: any;
     if (LLM_PROVIDER === 'gemini') {
         if (!GEMINI_API_KEY) {
             throw new McpError(ErrorCode.InvalidRequest, 'LLM_PROVIDER is "gemini" but GEMINI_API_KEY environment variable is not set.');
@@ -48,35 +46,27 @@ export async function processSourcesWithLlm(
             { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
             { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
         ];
-        const generationConfig = { /* Optional settings */ };
-        llmClient = genAI.getGenerativeModel({ model: LLM_MODEL, safetySettings, generationConfig }); // Use LLM_MODEL
+        const generationConfig = { };
+        llmClient = genAI.getGenerativeModel({ model: LLM_MODEL, safetySettings, generationConfig });
     } else if (LLM_PROVIDER === 'ollama') {
         const ollamaConfig: { host?: string } = {};
         if (OLLAMA_BASE_URL) {
             ollamaConfig.host = OLLAMA_BASE_URL;
         }
         llmClient = new Ollama(ollamaConfig);
-        // Optional: Add a check here to see if Ollama server is reachable
-        // try { await llmClient.list(); } catch (e) { throw new McpError(ErrorCode.BadGateway, `Could not connect to Ollama at ${OLLAMA_BASE_URL || 'default location'}`); }
         safeLog?.('info', `[${taskId}] Using Ollama provider with model ${LLM_MODEL} at ${OLLAMA_BASE_URL || 'default'}`);
     } else {
         throw new McpError(ErrorCode.InvalidRequest, `Unsupported LLM_PROVIDER: ${LLM_PROVIDER}. Must be 'gemini' or 'ollama'.`);
     }
 
-    let finalLlmsContent = `# LLMS Full Content for ${topic} (Provider: ${LLM_PROVIDER}, Model: ${LLM_MODEL})\n\n`; // Add provider/model info
+    let finalLlmsContent = `# LLMS Full Content for ${topic} (Provider: ${LLM_PROVIDER}, Model: ${LLM_MODEL})\n\n`;
     let llmErrors = 0;
     let processedCount = 0;
 
     updateTaskDetails(taskId, `Starting LLM processing stage for ${urlsToProcess.length} sources...`);
     safeLog?.('info', `[${taskId}] Starting LLM stage. Processing up to ${max_llm_calls} sources.`);
 
-    // Removed Gemini-specific setup from here, moved above
-
     // --- Acquire Browser Lock for Extraction ---
-    // We need the browser for content extraction within the loop.
-    // Acquire it once before the loop starts.
-    // Use retry logic? For now, let's try a simple acquire. If it fails, the task will fail.
-    // Consider adding retry or queueing for the browser lock if this becomes a bottleneck.
     if (!acquireBrowserLock()) {
         safeLog?.('error', `[${taskId}] LLM Stage: Failed to acquire browser lock before starting processing loop.`);
         throw new Error("Could not acquire browser lock for LLM stage content extraction.");
@@ -85,13 +75,13 @@ export async function processSourcesWithLlm(
     let browserLockReleased = false;
     // --- End Acquire Browser Lock ---
 
-    try { // Wrap the entire loop in try...finally for browser lock release
+    try {
         for (let i = 0; i < urlsToProcess.length; i++) {
             const itemPathOrUrl = urlsToProcess[i];
             if (isTaskCancelled(taskId)) {
             updateTaskDetails(taskId, 'Cancellation requested during LLM processing.');
             safeLog?.('info', `[${taskId}] Cancellation requested during LLM stage.`);
-            throw new McpError(ErrorCode.InternalError, `LLMS Full generation task ${taskId} cancelled by user during LLM stage.`); // Updated message
+            throw new McpError(ErrorCode.InternalError, `LLMS Full generation task ${taskId} cancelled by user during LLM stage.`);
         }
         if (processedCount >= max_llm_calls) {
             safeLog?.('warning', `[${taskId}] Reached max_llm_calls limit (${max_llm_calls}). Stopping LLM processing.`);
@@ -108,7 +98,7 @@ export async function processSourcesWithLlm(
 
             if (!sourceContent || sourceContent.trim().length === 0) {
                 safeLog?.('warning', `[${taskId}] LLM Stage: Skipping ${itemPathOrUrl}: No content extracted.`);
-                continue; // Skip to next URL if no content
+                continue;
             }
 
             const prompt = `Generate a Markdown section summarizing the key information from the following documentation content, suitable for inclusion in a larger 'llms-full.txt' guide. Follow these guidelines:\n  - Use clear and concise language. Avoid jargon where possible or explain it.\n  - Implement a clear hierarchy of headings and subheadings (use ## or ### appropriately for sections within this source).\n  - Prioritize API references, usage examples, and common errors/FAQs if present.\n  - Exclude redundant explanations, marketing fluff, navigation elements, and complex formatting not suitable for Markdown.\n  - Ensure information conveyed through images in the original content is described in text.\n  - Format code snippets clearly using Markdown code blocks.\n  - Format troubleshooting/FAQs as Q&A if applicable.\n\n  Documentation Content for ${itemPathOrUrl}:\n  ---\n  ${sourceContent.substring(0, 100000)}\n  ---\n  `;
@@ -117,7 +107,7 @@ export async function processSourcesWithLlm(
             safeLog?.('debug', `[${taskId}] LLM Stage: Sending content from ${itemPathOrUrl} to ${LLM_PROVIDER}...`);
 
             let generatedSection = '';
-            let llmErrorReason = `LLM (${LLM_PROVIDER}) did not return valid content.`; // Default error
+            let llmErrorReason = `LLM (${LLM_PROVIDER}) did not return valid content.`;
 
             try {
                 if (LLM_PROVIDER === 'gemini') {
@@ -137,7 +127,6 @@ export async function processSourcesWithLlm(
                                 llmErrorReason = `Gemini generation finished unexpectedly: ${finishReason}`;
                             }
                         }
-                        // Throw an error to be caught below
                         throw new Error(llmErrorReason);
                     }
                     generatedSection = response.candidates[0].content.parts[0].text;
@@ -145,20 +134,17 @@ export async function processSourcesWithLlm(
                 } else if (LLM_PROVIDER === 'ollama') {
                     const result = await llmClient.generate({
                         model: LLM_MODEL,
-                        prompt: prompt, // Ollama uses a single prompt string
-                        stream: false, // Get the full response at once
-                        // Add other Ollama options if needed, e.g., system prompt, format: 'json'
+                        prompt: prompt,
+                        stream: false,
                     });
                     processedCount++;
 
                     if (!result || !result.response) {
-                         // Throw an error to be caught below
                         throw new Error(llmErrorReason);
                     }
                     generatedSection = result.response;
                 }
 
-                // Common success path
                 finalLlmsContent += `\n\n--- Source: ${itemPathOrUrl} ---\n\n${generatedSection}`;
                 safeLog?.('debug', `[${taskId}] LLM Stage: Successfully generated section from ${itemPathOrUrl} using ${LLM_PROVIDER}.`);
 
@@ -169,29 +155,26 @@ export async function processSourcesWithLlm(
                 // Update task details with the specific LLM error
                 updateTaskDetails(taskId, specificErrorMsg);
                 llmErrors++;
-                continue; // Skip to next URL on LLM failure
+                continue;
             }
 
         } catch (extractionOrOtherError: any) {
-            // Catch errors from content extraction or other parts of the loop
             const specificErrorMsg = `Error processing ${itemPathOrUrl}: ${extractionOrOtherError.message}`;
             safeLog?.('error', `[${taskId}] LLM Stage: ${specificErrorMsg}`);
-            // Update task details with the specific extraction/other error
             updateTaskDetails(taskId, specificErrorMsg);
-            llmErrors++; // Count error and continue to next URL
+            llmErrors++;
         }
-    } // End loop
+    }
 
     updateTaskDetails(taskId, `LLM stage finished. Processed ${processedCount} sources with ${llmErrors} errors.`);
     if (!isTaskCancelled(taskId) && processedCount === 0 && urlsToProcess.length > 0) {
-        // If no sources were successfully processed (due to extraction or LLM errors), throw
         throw new Error(`LLM Stage: Failed to process or generate content for any sources.`);
     }
     safeLog?.('info', `[${taskId}] LLM Stage: Processed ${processedCount} sources with ${llmErrors} errors.`);
 
-    return finalLlmsContent; // Use renamed variable
+    return finalLlmsContent;
 
-    } finally { // Ensure browser lock is released
+    } finally {
         if (!browserLockReleased) {
             releaseBrowserLock();
             browserLockReleased = true;

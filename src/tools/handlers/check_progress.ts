@@ -2,7 +2,6 @@ import { BaseHandler } from './base-handler.js';
 import { McpToolResponse } from '../types.js';
 import { getAllTasks, TaskInfo, TaskStatusValue } from '../../tasks.js';
 
-// Define a structure to hold counts for each task type
 interface ProgressSummary {
     total: number;
     completed: number;
@@ -37,7 +36,6 @@ export class CheckProgressHandler extends BaseHandler {
                 case 'completed': typeSummary.completed++; break;
                 case 'running':
                     typeSummary.running++;
-                    // Safely add progress, defaulting to 0 if undefined
                     typeSummary.runningProgressCurrent += taskInfo.progressCurrent ?? 0;
                     typeSummary.runningProgressTotal += taskInfo.progressTotal ?? 0;
                     break;
@@ -47,13 +45,11 @@ export class CheckProgressHandler extends BaseHandler {
             }
         }
 
-        // Format the report string
         let report = "";
         for (const type in summary) {
-            if (type === 'unknown' && summary[type].total === 0) continue; // Skip unknown if empty
+            if (type === 'unknown' && summary[type].total === 0) continue;
 
             const s = summary[type];
-            // Show progress only if there are running tasks AND a non-zero total progress has been reported
             const progressText = s.running > 0 && s.runningProgressTotal > 0 ? ` (Progress: ${s.runningProgressCurrent}/${s.runningProgressTotal})` : '';
             report += `${type.charAt(0).toUpperCase() + type.slice(1)} Tasks:\n`;
             report += `- Total: ${s.total}\n`;
