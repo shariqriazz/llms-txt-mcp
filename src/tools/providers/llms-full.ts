@@ -24,23 +24,23 @@ import { pipelineEmitter } from '../../pipeline_state.js'; // Import the event e
 
 // --- Configuration ---
 export let apiClient: ApiClient | undefined; // Export apiClient
-let isRagdocsConfigured = false;
+let isLlmsFullConfigured = false;
 
 const COLLECTION_NAME = 'documentation'; // As defined in original handler-registry
 
 type LogFunction = (level: 'error' | 'debug' | 'info' | 'notice' | 'warning' | 'critical' | 'alert' | 'emergency', data: any) => void;
 
-// Corrected checkRagdocsConfig function
-export function checkRagdocsConfig(safeLog: LogFunction): void {
+// Corrected checkLlmsFullConfig function
+export function checkLlmsFullConfig(safeLog: LogFunction): void {
     let missingVars = false;
     // Basic check for Qdrant URL
     if (!process.env.QDRANT_URL) {
-        safeLog('warning', 'QDRANT_URL environment variable not set. RAGDocs tools require it.');
+        safeLog('warning', 'QDRANT_URL environment variable not set. llms-full tools require it.');
         missingVars = true;
     }
     // Basic check for provider selection
      if (!process.env.EMBEDDING_PROVIDER) {
-        safeLog('warning', 'EMBEDDING_PROVIDER environment variable not set (e.g., openai, ollama, google). RAGDocs tools require it.');
+        safeLog('warning', 'EMBEDDING_PROVIDER environment variable not set (e.g., openai, ollama, google). llms-full tools require it.');
         missingVars = true;
     } else {
         // Add checks for provider-specific keys/URLs if needed
@@ -59,23 +59,23 @@ export function checkRagdocsConfig(safeLog: LogFunction): void {
     }
     // Also check GEMINI_API_KEY specifically if the generate tool might be used, even if embedding provider is different
     if (!process.env.GEMINI_API_KEY) {
-        safeLog('warning', 'GEMINI_API_KEY environment variable not set. The ragdocs_generate_llms_full_guide tool requires it.');
+        safeLog('warning', 'GEMINI_API_KEY environment variable not set. The llms_full_generate_llms_full_guide tool requires it.');
         // Don't set missingVars = true here, as other tools might still work
     }
 
     if (missingVars) {
-        safeLog('warning', 'RAGDocs tools may not function correctly due to missing configuration.');
-        isRagdocsConfigured = false;
+        safeLog('warning', 'llms-full tools may not function correctly due to missing configuration.');
+        isLlmsFullConfigured = false;
     } else {
         try {
             // Initialize ApiClient only if basic config seems present
             apiClient = new ApiClient();
-            isRagdocsConfigured = true;
-             safeLog('info', 'RAGDocs ApiClient initialized.');
+            isLlmsFullConfigured = true;
+             safeLog('info', 'llms-full ApiClient initialized.');
         } catch (error: any) {
-            safeLog('error', `Failed to initialize RAGDocs ApiClient: ${error.message}`);
+            safeLog('error', `Failed to initialize llms-full ApiClient: ${error.message}`);
             apiClient = undefined;
-            isRagdocsConfigured = false;
+            isLlmsFullConfigured = false;
         }
     }
 }
@@ -83,7 +83,7 @@ export function checkRagdocsConfig(safeLog: LogFunction): void {
 
 // --- Tool Definitions (Adapting from original handler-registry.ts) ---
 // Using Zod for internal definition consistency
-interface RagdocsToolDefinition {
+interface LlmsFullToolDefinition {
     name: string;
     description: string;
     parameters: z.ZodObject<any>;
@@ -97,19 +97,19 @@ const handlerInstances: {
     embed?: EmbedHandler;
 } = {};
 
-// Corrected ragdocsToolDefinitions object
-const ragdocsToolDefinitions: Record<string, RagdocsToolDefinition> = {
+// Corrected llmsFullToolDefinitions object
+const llmsFullToolDefinitions: Record<string, LlmsFullToolDefinition> = {
     // --- Vector Store Tools ---
     vector_store_list_sources: {
-        name: 'ragdocs_vector_store_list_sources',
-        description: 'List all unique source URLs/paths currently indexed in the vector store. Optionally filter by category. If the store is large, consider using `ragdocs_vector_store_list_categories` first to narrow down the scope.',
+        name: 'llms_full_vector_store_list_sources',
+        description: 'List all unique source URLs/paths currently indexed in the vector store. Optionally filter by category. If the store is large, consider using `llms_full_vector_store_list_categories` first to narrow down the scope.',
         parameters: z.object({
             category: z.string().optional().describe('Optional category name to filter sources by.'),
         }),
         handlerClass: VectorStoreListSourcesHandler,
     },
     vector_store_remove_source: {
-        name: 'ragdocs_vector_store_remove_source',
+        name: 'llms_full_vector_store_remove_source',
         description: 'Remove all indexed content from the vector store originating from specific source URLs/paths.',
         parameters: z.object({
             urls: z.array(z.string()).min(1).describe('Array of source URLs/paths to remove (must match exactly the indexed source string).'),
@@ -117,19 +117,19 @@ const ragdocsToolDefinitions: Record<string, RagdocsToolDefinition> = {
         handlerClass: VectorStoreRemoveSourceHandler,
     },
     vector_store_reset: {
-        name: 'ragdocs_vector_store_reset',
+        name: 'llms_full_vector_store_reset',
         description: 'Delete and recreate the documentation vector store collection (Qdrant). Warning: This permanently removes all indexed data.',
         parameters: z.object({}),
         handlerClass: VectorStoreResetHandler,
     },
     vector_store_list_categories: {
-        name: 'ragdocs_vector_store_list_categories',
+        name: 'llms_full_vector_store_list_categories',
         description: 'List all unique categories assigned to indexed sources in the vector store.',
         parameters: z.object({}),
         handlerClass: VectorStoreListCategoriesHandler,
     },
     vector_store_search: {
-        name: 'ragdocs_vector_store_search',
+        name: 'llms_full_vector_store_search',
         description: 'Search the vector store using natural language. Optionally filter results by category and/or source URL/path pattern.',
         parameters: z.object({
             query: z.string().describe('The text to search for in the documentation.'),
@@ -141,7 +141,7 @@ const ragdocsToolDefinitions: Record<string, RagdocsToolDefinition> = {
         handlerClass: VectorStoreSearchHandler,
     },
     util_extract_urls: {
-        name: 'ragdocs_util_extract_urls',
+        name: 'llms_full_util_extract_urls',
         description: 'Utility to extract same-origin URLs from a webpage. Can find shallower links and optionally add results to the processing queue.',
         parameters: z.object({
             url: z.string().url({ message: 'Valid URL is required' }).describe('The complete URL of the webpage to analyze.'),
@@ -152,7 +152,7 @@ const ragdocsToolDefinitions: Record<string, RagdocsToolDefinition> = {
     },
     // --- New Task-Based Tools ---
     crawl: {
-        name: 'ragdocs_crawl',
+        name: 'llms_full_crawl',
         description: 'Starts the crawling and discovery stage for one or more topics/URLs. Accepts an array of requests, each returning a task ID.',
         parameters: z.object({
             requests: z.array(z.object({ // Expect an array of requests
@@ -165,7 +165,7 @@ const ragdocsToolDefinitions: Record<string, RagdocsToolDefinition> = {
         handlerClass: CrawlHandler,
     },
     process: {
-        name: 'ragdocs_process',
+        name: 'llms_full_process',
         description: 'Starts the LLM processing stage using the output of completed crawl task(s). Accepts an array of crawl_task_ids or request objects. Returns task IDs.',
         parameters: z.object({
             requests: z.union([
@@ -179,7 +179,7 @@ const ragdocsToolDefinitions: Record<string, RagdocsToolDefinition> = {
         handlerClass: ProcessHandler,
     },
     embed: {
-        name: 'ragdocs_embed',
+        name: 'llms_full_embed',
         description: 'Starts the embedding and indexing stage using the output of completed process task(s). Accepts an array of process_task_ids. Returns task IDs.',
         parameters: z.object({
             requests: z.array(z.string().min(1)).min(1).describe('An array of completed process_task_ids.')
@@ -187,7 +187,7 @@ const ragdocsToolDefinitions: Record<string, RagdocsToolDefinition> = {
         handlerClass: EmbedHandler,
     },
     cancel_task: {
-        name: 'ragdocs_cancel_task',
+        name: 'llms_full_cancel_task',
         description: 'Attempts to cancel a running/queued crawl, process, or embed task. Provide EITHER a specific `taskId` OR set `all` to true.',
         parameters: z.object({
             taskId: z.string().min(1).optional().describe('Optional: The unique ID of the task to cancel.'),
@@ -196,7 +196,7 @@ const ragdocsToolDefinitions: Record<string, RagdocsToolDefinition> = {
         handlerClass: CancelTaskHandler,
     },
     get_task_status: {
-        name: 'ragdocs_get_task_status',
+        name: 'llms_full_get_task_status',
         description: 'Get the status of a specific task (crawl, process, embed), or all tasks of a specific type, or all tasks. Control output detail with detail_level.',
         parameters: z.object({
             taskId: z.string().min(1).optional().describe('Optional: The unique ID of the task to check. If omitted, returns multiple tasks based on taskType.'),
@@ -206,7 +206,7 @@ const ragdocsToolDefinitions: Record<string, RagdocsToolDefinition> = {
         handlerClass: GetTaskStatusHandler,
     },
     get_task_details: {
-        name: 'ragdocs_get_task_details',
+        name: 'llms_full_get_task_details',
         description: 'Get the detailed output/result string for a specific task ID. This often contains JSON with results like discovered URLs or file paths.',
         parameters: z.object({
             taskId: z.string().min(1).describe('The unique ID of the task to get details for.'),
@@ -215,14 +215,14 @@ const ragdocsToolDefinitions: Record<string, RagdocsToolDefinition> = {
     },
     // --- Other Tools ---
     cleanup_task_store: {
-        name: 'ragdocs_cleanup_task_store',
+        name: 'llms_full_cleanup_task_store',
         description: 'Removes completed, failed, and cancelled tasks from the internal task list.',
         parameters: z.object({}), // No parameters
         handlerClass: CleanupTaskStoreHandler,
     },
     // --- New Progress Summary Tool ---
     check_progress: {
-        name: 'ragdocs_check_progress',
+        name: 'llms_full_check_progress',
         description: 'Provides a summary report of crawl, process, and embed tasks, categorized by status (completed, running, queued, failed, cancelled) and showing progress for running tasks.',
         parameters: z.object({}), // No input parameters
         handlerClass: CheckProgressHandler, // Reference the new handler
@@ -270,18 +270,18 @@ function zodToJsonSchema(zodSchema: z.ZodObject<any>): any {
     let pipelineListenerAttached = false;
 
     // --- Tool Registration Function ---
-    export function registerRagdocsTools(
+    export function registerLlmsFullTools(
     tools: Tool[],
     handlers: Map<string, (args: any) => Promise<any>>,
     safeLog: LogFunction
 ): void {
-    if (!isRagdocsConfigured || !apiClient) {
-        safeLog('warning', 'Skipping RAGDocs tool registration: Client not initialized or configuration missing.');
+    if (!isLlmsFullConfigured || !apiClient) {
+        safeLog('warning', 'Skipping llms-full tool registration: Client not initialized or configuration missing.');
         return;
     }
 
-    for (const toolKey in ragdocsToolDefinitions) {
-        const definition = ragdocsToolDefinitions[toolKey];
+    for (const toolKey in llmsFullToolDefinitions) {
+        const definition = llmsFullToolDefinitions[toolKey];
         // Instantiate the handler here
         const handlerInstance = new definition.handlerClass(apiClient, safeLog);
 
@@ -312,19 +312,19 @@ function zodToJsonSchema(zodSchema: z.ZodObject<any>): any {
 
         // Ensure initCollection is called before each handler execution (except for cancel, status check, discovered urls)
         const skipInitCollection = [
-            'ragdocs_cancel_task',     // New cancel tool
-            'ragdocs_get_task_status', // New status tool
-            'ragdocs_get_task_details',// New details tool
-            'ragdocs_cleanup_task_store',
-            'ragdocs_check_progress', // Added new tool
+            'llms_full_cancel_task',     // New cancel tool
+            'llms_full_get_task_status', // New status tool
+            'llms_full_get_task_details',// New details tool
+            'llms_full_cleanup_task_store',
+            'llms_full_check_progress', // Added new tool
             // Add other tools that don't need Qdrant init here if necessary
         ];
         if (!skipInitCollection.includes(definition.name)) {
             // Handler requires initCollection
             handlers.set(definition.name, async (args) => {
                 if (!apiClient) {
-                     safeLog('error', "RAGDocs ApiClient is undefined when handler called.");
-                     throw new Error("RAGDocs ApiClient not initialized.");
+                     safeLog('error', "llms-full ApiClient is undefined when handler called.");
+                     throw new Error("llms-full ApiClient not initialized.");
                 }
                 safeLog('debug', `ApiClient object keys: ${Object.keys(apiClient || {}).join(', ')}`);
                 safeLog('debug', `Does apiClient have initCollection? ${typeof (apiClient as any)?.initCollection === 'function'}`);
@@ -352,7 +352,7 @@ function zodToJsonSchema(zodSchema: z.ZodObject<any>): any {
                         return { content: [{ type: "text", text: textResult.trim() }] };
                     }
                 } catch (error: any) {
-                     safeLog('error', `RAGDocs tool ${definition.name} failed: ${error.message}`);
+                     safeLog('error', `llms-full tool ${definition.name} failed: ${error.message}`);
                      // Rethrow for the main handler to catch and format
                      throw error;
                 }
@@ -366,11 +366,11 @@ function zodToJsonSchema(zodSchema: z.ZodObject<any>): any {
                      const result = await handlerInstance.handle(validatedArgs, { cancellationToken: undefined }); // Placeholder context
                      return result;
                  } catch (error: any) {
-                     safeLog('error', `RAGDocs tool ${definition.name} failed: ${error.message}`);
+                     safeLog('error', `llms-full tool ${definition.name} failed: ${error.message}`);
                      throw error;
                  }
              });
         }
     }
-    safeLog('debug', 'RAGDocs tools registered.');
+    safeLog('debug', 'llms-full tools registered.');
 }

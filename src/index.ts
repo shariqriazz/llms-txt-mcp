@@ -19,7 +19,7 @@ dotenv.config();
 // Removed Brave/Exa: import { registerExaTools, checkExaConfig } from "./tools/providers/exa.js";
 import { registerTavilyTools, checkTavilyConfig } from "./tools/providers/tavily.js";
 // Import apiClient as well
-import { registerRagdocsTools, checkRagdocsConfig, apiClient } from "./tools/providers/ragdocs.js";
+import { registerLlmsFullTools, checkLlmsFullConfig, apiClient } from "./tools/providers/llms-full.js";
 
 // --- Configuration Check ---
 // Check if required API keys are present, log warnings if not.
@@ -27,12 +27,12 @@ import { registerRagdocsTools, checkRagdocsConfig, apiClient } from "./tools/pro
 // Removed Brave/Exa: checkBraveConfig();
 // Removed Brave/Exa: checkExaConfig();
 checkTavilyConfig();
-checkRagdocsConfig(safeLog); // Added RAGDocs config check, pass safeLog if needed by check
+checkLlmsFullConfig(safeLog); // Added RAGDocs config check, pass safeLog if needed by check
 
 // --- Server Initialization ---
 const server = new Server(
   {
-    name: "ragdocs-mcp", // Simplified server name
+    name: "llms-full-mcp", // Simplified server name
     version: "1.1.0", // Bump version for changes
   },
   {
@@ -80,7 +80,7 @@ async function runServer() {
     // Removed Brave/Exa: registerBraveTools(allTools, toolHandlers, safeLog);
     // Removed Brave/Exa: registerExaTools(allTools, toolHandlers, safeLog);
     registerTavilyTools(allTools, toolHandlers, safeLog);
-    registerRagdocsTools(allTools, toolHandlers, safeLog); // Added RAGDocs registration
+    registerLlmsFullTools(allTools, toolHandlers, safeLog); // Added RAGDocs registration
 
     // --- Setup Request Handlers (After Connection & Tool Registration) ---
     setupRequestHandlers(server, allTools, toolHandlers, safeLog);
@@ -88,8 +88,8 @@ async function runServer() {
 
     // Now that we're connected and handlers are set, log success
     // Log initialization success via console.error as well
-    console.error(`RAGDocs MCP Server initialized successfully with ${allTools.length} tools.`); // Simplified log message
-    console.error("RAGDocs MCP Server running on stdio."); // Simplified log message
+    console.error(`llms-full MCP Server initialized successfully with ${allTools.length} tools.`); // Simplified log message
+    console.error("llms-full MCP Server running on stdio."); // Simplified log message
 } catch (error) {
   console.error("Fatal error running server:", error);
   process.exit(1);

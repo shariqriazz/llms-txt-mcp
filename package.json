@@ -1,7 +1,7 @@
 {
-  "name": "ragdocs-mcp",
+  "name": "llms-full-mcp",
   "version": "1.0.0",
-  "description": "Unified MCP server combining Brave, Exa, Tavily and RAGDocs capabilities.",
+  "description": "MCP server providing Tavily search and an llms-full pipeline for documentation processing using Qdrant.",
   "main": "build/index.js",
   "type": "module",
   "scripts": {
@@ -10,17 +10,17 @@
     "dev": "tsc -w & node --watch build/index.js"
   },
   "bin": {
-    "ragdocs-mcp": "build/index.js"
+    "llms-full-mcp": "build/index.js"
   },
   "keywords": [
     "mcp",
     "model-context-protocol",
     "search",
-    "brave",
-    "exa",
     "tavily",
     "ai",
-    "ragdocs"
+    "llms-full",
+    "pipeline",
+    "qdrant"
   ],
   "author": "AI Assistant",
   "license": "MIT",
