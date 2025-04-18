@@ -1,0 +1,17 @@
+# Node dependencies
+node_modules/
+
+# Bun lockfile
+bun.lock
+
+# Build output
+build/
+
+# Environment variables
+.env
+
+# Task store persistence
+.task_store.json
+
+# Intermediate output directories
+generated_llms_guides/

@@ -1,0 +1,52 @@
+{
+  "name": "ragdocs-mcp",
+  "version": "1.0.0",
+  "description": "Unified MCP server combining Brave, Exa, Tavily and RAGDocs capabilities.",
+  "main": "build/index.js",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node build/index.js",
+    "dev": "tsc -w & node --watch build/index.js"
+  },
+  "bin": {
+    "ragdocs-mcp": "build/index.js"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "search",
+    "brave",
+    "exa",
+    "tavily",
+    "ai",
+    "ragdocs"
+  ],
+  "author": "AI Assistant",
+  "license": "MIT",
+  "dependencies": {
+    "@google/genai": "^0.8.0",
+    "@google/generative-ai": "^0.24.0",
+    "@modelcontextprotocol/sdk": "^1.4.1",
+    "@qdrant/js-client-rest": "^1.13.0",
+    "axios": "^1.8.4",
+    "cheerio": "^1.0.0",
+    "dotenv": "^16.5.0",
+    "mammoth": "^1.9.0",
+    "marked": "^15.0.8",
+    "ollama": "^0.5.14",
+    "openai": "^4.94.0",
+    "p-limit": "^6.2.0",
+    "playwright": "^1.51.1",
+    "uuid": "^11.1.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.30",
+    "@types/uuid": "^10.0.0",
+    "typescript": "^5.8.3"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
