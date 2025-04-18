@@ -1,166 +1,218 @@
 import { BaseHandler } from './base-handler.js';
-    import { McpToolResponse } from '../types.js';
-    import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
-    import { z } from 'zod';
-    import { getTaskStatus, TaskInfo } from '../../tasks.js';
-    import { GetLlmsFullHandler } from './get_llms_full_handler.js'; // Import to potentially call handle directly or reuse schema
+import { McpToolResponse } from '../types.js';
+import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
+import { z } from 'zod';
+import { getTaskStatus, TaskInfo } from '../../tasks.js';
+// No longer need to import GetLlmsFullHandler
+// import { GetLlmsFullHandler } from './get_llms_full_handler.js';
 
-    // --- Input Schema ---
-    const RestartStageEnum = z.enum(['crawl', 'synthesize', 'embed']);
-    type RestartStage = z.infer<typeof RestartStageEnum>;
+// --- Input Schema ---
+// Add 'fetch' to the restartable stages
+const RestartStageEnum = z.enum(['discovery', 'fetch', 'synthesize', 'embed']);
+type RestartStage = z.infer<typeof RestartStageEnum>;
 
-    const RestartTaskInputSchema = z.object({
-      failed_task_id: z.string().min(1).describe('The ID of the failed get-llms-full task to restart.'),
-      restart_stage: RestartStageEnum.describe("The stage from which to restart ('crawl', 'synthesize', or 'embed')."),
-    });
+const RestartTaskInputSchema = z.object({
+  failed_task_id: z.string().min(1).describe('The ID of the failed get-llms-full task to restart.'),
+  restart_stage: RestartStageEnum.describe("The stage from which to restart ('discovery', 'fetch', 'synthesize', or 'embed')."),
+});
 
-    type ValidatedRestartArgs = z.infer<typeof RestartTaskInputSchema>;
+type ValidatedRestartArgs = z.infer<typeof RestartTaskInputSchema>;
 
-    // --- Interfaces from get_llms_full_handler (copy for parsing) ---
-    interface CrawlResult {
-        discoveredUrlsFilePath: string;
-        category: string;
-        isSourceLocal: boolean;
-        originalTopicOrUrl: string;
+// --- Interfaces for parsing results from task details ---
+// Keep these aligned with the result interfaces in get_llms_full_handler.ts
+interface DiscoveryResult {
+    sourcesFilePath: string;
+    category: string;
+    isSourceLocal: boolean;
+    originalInput: string;
+}
+interface FetchResult {
+    fetchOutputDirPath: string;
+    category: string;
+    originalInput: string;
+    sourceCount: number;
+}
+interface SynthesizeResult {
+    summaryFilePath: string;
+    category: string;
+    originalInput: string;
+}
+interface StoredTaskDetails {
+    stage: 'discovery' | 'fetch' | 'synthesize'; // Stages that produce usable intermediate output
+    result: DiscoveryResult | FetchResult | SynthesizeResult;
+}
+
+// --- Handler Class ---
+export class RestartLlmsFullTaskHandler extends BaseHandler {
+
+  async handle(args: any): Promise<McpToolResponse> {
+    const validationResult = RestartTaskInputSchema.safeParse(args);
+    if (!validationResult.success) {
+      const errorMessage = validationResult.error.errors.map(e => e.message).join(', ');
+      throw new McpError(ErrorCode.InvalidParams, `Invalid input: ${errorMessage}`);
     }
-    interface SynthesizeResult {
-        processedFilePath: string;
-        category: string;
-        originalTopicOrUrl: string;
+    const { failed_task_id, restart_stage } = validationResult.data;
+
+    this.safeLog?.('info', `Attempting to prepare restart for task ${failed_task_id} from stage ${restart_stage}`);
+
+    // 1. Get failed task status and details
+    const failedTaskInfo = getTaskStatus(failed_task_id);
+    if (!failedTaskInfo) {
+        throw new McpError(ErrorCode.InvalidRequest, `Task ${failed_task_id} not found.`);
     }
-    interface StoredTaskDetails {
-        stage: 'crawl' | 'synthesize'; // Only store details after these stages
-        result: CrawlResult | SynthesizeResult;
+    // Consider allowing restart even if not 'failed'
+    if (failedTaskInfo.status !== 'failed') {
+        this.safeLog?.('warning', `Task ${failed_task_id} has status ${failedTaskInfo.status}, not 'failed'. Proceeding with restart prep anyway.`);
     }
 
-    // --- Handler Class ---
-    export class RestartLlmsFullTaskHandler extends BaseHandler {
+    // 2. Parse stored details to find necessary inputs
+    let discoveryResult: DiscoveryResult | null = null;
+    let fetchResult: FetchResult | null = null;
+    let synthesizeResult: SynthesizeResult | null = null;
+    let originalInput: string | undefined = undefined;
+    let category: string | undefined = undefined;
 
-      async handle(args: any): Promise<McpToolResponse> {
-        const validationResult = RestartTaskInputSchema.safeParse(args);
-        if (!validationResult.success) {
-          const errorMessage = validationResult.error.errors.map(e => e.message).join(', ');
-          throw new McpError(ErrorCode.InvalidParams, `Invalid input: ${errorMessage}`);
+    try {
+        const parsedDetails = JSON.parse(failedTaskInfo.details) as StoredTaskDetails | any;
+
+        // Extract results based on the stage recorded in details
+        if (parsedDetails && parsedDetails.stage && parsedDetails.result) {
+             if (parsedDetails.stage === 'discovery') {
+                 discoveryResult = parsedDetails.result as DiscoveryResult;
+                 originalInput = discoveryResult.originalInput;
+                 category = discoveryResult.category;
+             } else if (parsedDetails.stage === 'fetch') {
+                 fetchResult = parsedDetails.result as FetchResult;
+                 originalInput = fetchResult.originalInput;
+                 category = fetchResult.category;
+                 // If fetch finished, we implicitly have discovery results (though not the file path directly)
+             } else if (parsedDetails.stage === 'synthesize') {
+                 synthesizeResult = parsedDetails.result as SynthesizeResult;
+                 originalInput = synthesizeResult.originalInput;
+                 category = synthesizeResult.category;
+                 // If synthesize finished, we implicitly have fetch results (though not the dir path directly)
+             }
+        } else {
+             this.safeLog?.('warning', `Details for task ${failed_task_id} are not structured JSON or lack stage info. Restart might require more manual input.`);
+             // Attempt to extract original input from the initial "Queued processing for: ..." message if possible
+             const queuedMatch = failedTaskInfo.details.match(/Queued processing for: (.*)/);
+             if (queuedMatch && queuedMatch[1]) {
+                 originalInput = queuedMatch[1].trim().replace(/^"|"$/g, ''); // Extract description
+                 this.safeLog?.('info', `Extracted potential original input from queue message: ${originalInput}`);
+             }
         }
-        const { failed_task_id, restart_stage } = validationResult.data;
+    } catch (e) {
+        this.safeLog?.('warning', `Failed to parse details for task ${failed_task_id}. Restart might require manual input.`);
+         const queuedMatch = failedTaskInfo.details.match(/Queued processing for: (.*)/);
+         if (queuedMatch && queuedMatch[1]) {
+             originalInput = queuedMatch[1].trim().replace(/^"|"$/g, '');
+             this.safeLog?.('info', `Extracted potential original input from queue message: ${originalInput}`);
+         }
+    }
 
-        this.safeLog?.('info', `Attempting to prepare restart for task ${failed_task_id} from stage ${restart_stage}`);
+    // If category is still unknown, throw error as it's required
+    if (!category && restart_stage !== 'discovery') { // Discovery restart might infer category later if needed
+         throw new McpError(ErrorCode.InvalidRequest, `Cannot prepare restart for task ${failed_task_id}: Category could not be determined from task details.`);
+    }
+    // If original input is unknown and needed, throw error
+    if (!originalInput && restart_stage === 'discovery') {
+         throw new McpError(ErrorCode.InvalidRequest, `Cannot restart from 'discovery' stage for task ${failed_task_id}: Original topic/URL/path not found in task details.`);
+    }
 
-        // 1. Get failed task status and details
-        const failedTaskInfo = getTaskStatus(failed_task_id);
-        if (!failedTaskInfo) {
-            throw new McpError(ErrorCode.InvalidRequest, `Task ${failed_task_id} not found.`); // Use InvalidRequest
-        }
-        // Optional: Could add a check to ensure the task actually failed, but allow restarting completed/cancelled too?
-        // if (failedTaskInfo.status !== 'failed') {
-        //     this.safeLog?.('warning', `Task ${failed_task_id} has status ${failedTaskInfo.status}, not 'failed'. Proceeding with restart prep anyway.`);
-        // }
 
-        // 2. Parse stored details to find necessary inputs
-        let originalRequestParams: any = {}; // Store original params if possible (e.g., from initial details)
-        let crawlResult: CrawlResult | null = null;
-        let synthesizeResult: SynthesizeResult | null = null;
+    // 3. Construct new request for get_llms_full based on restart_stage
+    const newRequest: any = {
+        category: category || 'unknown', // Use determined category or default
+        topic_or_url: originalInput, // Use determined original input
+        // Add other params like crawl_depth, max_urls, max_llm_calls if they were stored/retrievable
+    };
 
-        try {
-            // Attempt to parse details as JSON (could be simple string on failure)
-            const parsedDetails = JSON.parse(failedTaskInfo.details) as StoredTaskDetails | any;
+    let message = '';
 
-            // Check if details contain structured stage results
-            if (parsedDetails && parsedDetails.stage && parsedDetails.result) {
-                 if (parsedDetails.stage === 'crawl') {
-                     crawlResult = parsedDetails.result as CrawlResult;
-                 } else if (parsedDetails.stage === 'synthesize') {
-                     synthesizeResult = parsedDetails.result as SynthesizeResult;
-                     // If synthesize finished, we likely also have crawl results implicitly or need to find them
-                     // For simplicity now, assume synthesize result is enough for embed restart
-                 }
-                 // Try to extract original request from somewhere if possible (maybe store it initially?)
-                 // originalRequestParams = parsedDetails.originalRequest || {};
-            } else {
-                 // Details might be a simple error string, less info available
-                 this.safeLog?.('warning', `Details for task ${failed_task_id} are not structured JSON. Restart might require more manual input.`);
-                 // We might need the original request parameters here. How to get them?
-                 // Maybe the initial 'Queued processing for: ...' detail could store the request?
-                 // For now, we'll rely on what we can get from potential intermediate results.
+    switch (restart_stage) {
+        case 'discovery':
+            // Restart from scratch - just need original topic/url/path and category
+            if (!newRequest.topic_or_url) { // Double check originalInput was found
+                 throw new McpError(ErrorCode.InvalidRequest, `Cannot restart from 'discovery' stage for task ${failed_task_id}: Original topic/URL/path not found.`);
             }
-        } catch (e) {
-            this.safeLog?.('warning', `Failed to parse details for task ${failed_task_id}. Restart might require manual input.`);
-        }
+            // Remove potentially inferred intermediate file paths
+            delete newRequest.discovery_output_file_path;
+            delete newRequest.fetch_output_dir_path;
+            delete newRequest.synthesized_content_file_path;
+            message = `Prepared restart from 'discovery' stage. Use the following request with the 'get_llms_full' tool.`;
+            break;
 
-        // 3. Construct new request for get_llms_full based on restart_stage
-        const newRequest: any = {
-            // Try to preserve original parameters if possible, otherwise use defaults/derived values
-            category: crawlResult?.category || synthesizeResult?.category || 'unknown', // Need category!
-            topic_or_url: crawlResult?.originalTopicOrUrl || synthesizeResult?.originalTopicOrUrl || undefined,
-            // Add other params like crawl_depth, max_urls, max_llm_calls if stored/needed
-        };
-
-        let message = '';
-
-        switch (restart_stage) {
-            case 'crawl':
-                // Restart from scratch - just need original topic/url and category
-                if (!newRequest.topic_or_url) {
-                     throw new McpError(ErrorCode.InvalidRequest, `Cannot restart from 'crawl' stage for task ${failed_task_id}: Original topic/URL not found in task details.`);
-                }
-                if (newRequest.category === 'unknown') {
-                     this.safeLog?.('warning', `Category for task ${failed_task_id} unknown, using 'unknown'.`);
-                }
-                // Remove file paths if they exist
-                delete newRequest.crawl_urls_file_path;
-                delete newRequest.synthesized_content_file_path;
-                message = `Prepared restart from 'crawl' stage. Use the following request with the 'get_llms_full' tool.`;
-                break;
-
-            case 'synthesize':
-                // Need crawl result (URL file path) and category
-                if (!crawlResult?.discoveredUrlsFilePath) {
-                     throw new McpError(ErrorCode.InvalidRequest, `Cannot restart from 'synthesize' stage for task ${failed_task_id}: Crawl result (URL file path) not found in task details.`);
-                }
-                newRequest.crawl_urls_file_path = crawlResult.discoveredUrlsFilePath;
-                newRequest.category = crawlResult.category; // Use category from crawl result
-                // Remove synthesized path if it exists
-                delete newRequest.synthesized_content_file_path;
-                // topic_or_url is optional now, but keep if available for context
-                newRequest.topic_or_url = crawlResult.originalTopicOrUrl;
-                message = `Prepared restart from 'synthesize' stage using URL file ${newRequest.crawl_urls_file_path}. Use the following request with the 'get_llms_full' tool.`;
-                break;
-
-            case 'embed':
-                // Need synthesize result (content file path) and category
-                 let synthFilePath: string | undefined;
-                 if (synthesizeResult?.processedFilePath) {
-                     synthFilePath = synthesizeResult.processedFilePath;
-                     newRequest.category = synthesizeResult.category; // Use category from synthesize result
-                     newRequest.topic_or_url = synthesizeResult.originalTopicOrUrl; // Keep for context
-                 } else if (crawlResult?.discoveredUrlsFilePath) {
-                     // Maybe synthesize failed but crawl succeeded? Try to find synth file based on convention? Risky.
-                     // Or maybe the details only contained crawl result?
-                     throw new McpError(ErrorCode.InvalidRequest, `Cannot restart from 'embed' stage for task ${failed_task_id}: Synthesize result (content file path) not found in task details.`);
-                 } else {
-                      throw new McpError(ErrorCode.InvalidRequest, `Cannot restart from 'embed' stage for task ${failed_task_id}: No intermediate results found in task details.`);
-                 }
-
-                newRequest.synthesized_content_file_path = synthFilePath;
-                // Remove crawl path if it exists
-                delete newRequest.crawl_urls_file_path;
-                message = `Prepared restart from 'embed' stage using content file ${newRequest.synthesized_content_file_path}. Use the following request with the 'get_llms_full' tool.`;
-                break;
-        }
-
-        // Return the parameters needed to call get_llms_full
-        const responsePayload = {
-            tool_name: "get_llms_full",
-            arguments: {
-                requests: [newRequest] // Wrap in requests array
+        case 'fetch':
+            // Need discovery result (sources file path)
+            if (!discoveryResult?.sourcesFilePath) {
+                 throw new McpError(ErrorCode.InvalidRequest, `Cannot restart from 'fetch' stage for task ${failed_task_id}: Discovery result (sources file path) not found in task details.`);
             }
-        };
+            newRequest.discovery_output_file_path = discoveryResult.sourcesFilePath;
+            newRequest.category = discoveryResult.category; // Ensure category from discovery is used
+            // topic_or_url is optional now, but keep if available for context
+            newRequest.topic_or_url = discoveryResult.originalInput;
+            // Remove later stage paths
+            delete newRequest.fetch_output_dir_path;
+            delete newRequest.synthesized_content_file_path;
+            message = `Prepared restart from 'fetch' stage using sources file ${newRequest.discovery_output_file_path}. Use the following request with the 'get_llms_full' tool.`;
+            break;
 
-        return {
-            content: [
-                { type: 'text', text: message },
-                { type: 'code', text: JSON.stringify(responsePayload, null, 2) } // Removed language property
-            ]
-        };
-      }
+        case 'synthesize':
+            // Need fetch result (output directory path)
+            if (!fetchResult?.fetchOutputDirPath) {
+                 // Maybe only discovery finished?
+                 if (discoveryResult?.sourcesFilePath) {
+                     throw new McpError(ErrorCode.InvalidRequest, `Cannot restart from 'synthesize' stage for task ${failed_task_id}: Fetch stage did not complete (only discovery results found). Try restarting from 'fetch'.`);
+                 }
+                 throw new McpError(ErrorCode.InvalidRequest, `Cannot restart from 'synthesize' stage for task ${failed_task_id}: Fetch result (output directory path) not found in task details.`);
+            }
+            newRequest.fetch_output_dir_path = fetchResult.fetchOutputDirPath;
+            newRequest.category = fetchResult.category; // Ensure category from fetch is used
+            // topic_or_url is optional now, but keep if available for context
+            newRequest.topic_or_url = fetchResult.originalInput;
+            // Remove later stage path
+            delete newRequest.discovery_output_file_path; // Also remove discovery path
+            delete newRequest.synthesized_content_file_path;
+            message = `Prepared restart from 'synthesize' stage using fetched content directory ${newRequest.fetch_output_dir_path}. Use the following request with the 'get_llms_full' tool.`;
+            break;
+
+        case 'embed':
+            // Need synthesize result (summary file path)
+            if (!synthesizeResult?.summaryFilePath) {
+                 // Maybe only fetch finished?
+                 if (fetchResult?.fetchOutputDirPath) {
+                     throw new McpError(ErrorCode.InvalidRequest, `Cannot restart from 'embed' stage for task ${failed_task_id}: Synthesize stage did not complete (only fetch results found). Try restarting from 'synthesize'.`);
+                 }
+                 // Maybe only discovery finished?
+                 if (discoveryResult?.sourcesFilePath) {
+                     throw new McpError(ErrorCode.InvalidRequest, `Cannot restart from 'embed' stage for task ${failed_task_id}: Fetch and Synthesize stages did not complete (only discovery results found). Try restarting from 'fetch'.`);
+                 }
+                 throw new McpError(ErrorCode.InvalidRequest, `Cannot restart from 'embed' stage for task ${failed_task_id}: Synthesize result (summary file path) not found in task details.`);
+            }
+            newRequest.synthesized_content_file_path = synthesizeResult.summaryFilePath;
+            newRequest.category = synthesizeResult.category; // Ensure category from synthesize is used
+            // topic_or_url is optional now, but keep if available for context
+            newRequest.topic_or_url = synthesizeResult.originalInput;
+            // Remove earlier stage paths
+            delete newRequest.discovery_output_file_path;
+            delete newRequest.fetch_output_dir_path;
+            message = `Prepared restart from 'embed' stage using summary file ${newRequest.synthesized_content_file_path}. Use the following request with the 'get_llms_full' tool.`;
+            break;
     }
+
+    // Return the parameters needed to call get_llms_full
+    const responsePayload = {
+        tool_name: "get_llms_full",
+        arguments: {
+            requests: [newRequest] // Wrap in requests array
+        }
+    };
+
+    return {
+        content: [
+            { type: 'text', text: message },
+            { type: 'code', text: JSON.stringify(responsePayload, null, 2) }
+        ]
+    };
+  }
+}

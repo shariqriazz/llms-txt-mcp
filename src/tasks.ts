@@ -3,7 +3,8 @@ import fs from 'fs/promises';
 import path from 'path';
 
 // --- Persistence ---
-const TASK_STORE_FILE = path.join(process.cwd(), '.task_store.json');
+const TASK_STORE_DIR = path.join(process.cwd(), 'data'); // Store in data directory
+const TASK_STORE_FILE = path.join(TASK_STORE_DIR, 'task_store.json'); // Use .json extension
 
 // Define the structure for storing task information
 export type TaskStatusValue = 'queued' | 'running' | 'cancelled' | 'completed' | 'failed'; // Added 'queued'
@@ -15,6 +16,7 @@ export interface TaskInfo {
   endTime: number | null; // Store as timestamp or null
   progressCurrent?: number; // Optional: Current progress unit (e.g., 7)
   progressTotal?: number;   // Optional: Total progress units (e.g., 10)
+  currentStage?: string; // Optional: Current stage name (e.g., 'Discovery', 'Fetch')
 }
 
 // Updated in-memory store for detailed task information
@@ -25,6 +27,8 @@ let taskStore = new Map<string, TaskInfo>();
 // --- Persistence Functions ---
 async function saveTaskStoreToFile(): Promise<void> {
     try {
+        // Ensure directory exists before writing
+        await fs.mkdir(TASK_STORE_DIR, { recursive: true });
         const dataToSave = JSON.stringify(Array.from(taskStore.entries()));
         await fs.writeFile(TASK_STORE_FILE, dataToSave, 'utf-8');
     } catch (error) {
@@ -67,6 +71,7 @@ export function registerTask(prefix: string = 'task'): string {
     details: 'Initializing...',
     startTime: now,
     endTime: null,
+    currentStage: 'queued', // Initialize stage as 'queued'
   };
   taskStore.set(taskId, initialInfo);
   console.error(`[INFO] Registered new task: ${taskId}`);
@@ -90,6 +95,10 @@ export function setTaskStatus(taskId: string, status: TaskStatusValue): void {
     } else if (!isFinalState) {
         // Ensure endTime is null if transitioning back to a non-final state (e.g., queued -> running)
         taskInfo.endTime = null;
+        // Don't clear currentStage when going back to running/queued
+    } else if (isFinalState) {
+        // Clear currentStage when task reaches a final state
+        taskInfo.currentStage = undefined;
     }
     console.error(`[INFO] Updated task ${taskId} status to: ${status}`);
     saveTaskStoreToFile();
@@ -131,8 +140,28 @@ export function updateTaskDetails(taskId: string, details: string): void {
          taskInfo.details = details;
          saveTaskStoreToFile();
     } else {
-        console.error(`[WARN] Attempted to update details for unknown task ID: ${taskId}`);
+        // Only log warning if taskInfo is truly missing
+        if (!taskInfo) {
+           console.error(`[WARN] Attempted to update details for unknown task ID: ${taskId}`);
+        }
     }
+}
+
+/**
+ * Updates only the current stage of a task.
+ */
+export function setTaskStage(taskId: string, stage: string | undefined): void {
+  const taskInfo = taskStore.get(taskId);
+  if (taskInfo) {
+    // Only update if the stage is actually changing to avoid unnecessary saves
+    if (taskInfo.currentStage !== stage) {
+        taskInfo.currentStage = stage;
+        console.error(`[INFO] Updated task ${taskId} stage to: ${stage}`);
+        saveTaskStoreToFile(); // Save changes
+    }
+  } else {
+    console.error(`[WARN] Attempted to set stage for unknown task ID: ${taskId}`);
+  }
 }
 
 /**

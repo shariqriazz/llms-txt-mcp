@@ -7,15 +7,17 @@ This Model Context Protocol (MCP) server provides tools for managing and searchi
 *   **API Integration:** Access tools powered by Tavily AI and llms-full through one server.
 *   **Web Search:** Perform general web search via Tavily (`tavily_search`, `tavily_extract`).
 *   **Documentation RAG:** Manage and query local documentation indexed in a vector store (Qdrant + OpenAI/Ollama/Google). Includes tools for listing sources/categories, removing sources, resetting the store, and performing vector search (`llms_full_vector_store_*`).
-*   **Unified Sequential Pipeline (`get_llms_full`):** Processes documentation sources (topics, URLs, or local files) through a sequential Crawl -> Synthesize -> Embed pipeline.
-    *   **Crawl:** Discovers URLs for a topic (using Tavily) or starts from a given URL/path. Crawls linked pages based on depth/limits. Saves discovered URLs to a file. (Can be skipped by providing `crawl_urls_file_path`).
-    *   **Synthesize:** Takes discovered URLs, extracts content, uses a configured LLM (Gemini, Ollama, or OpenRouter) to generate structured markdown summaries, and saves intermediate files. (Can be skipped by providing `synthesized_content_file_path`).
-    *   **Embed:** Takes the synthesized markdown, chunks/embeds the content using the configured embedding provider, and indexes it into the Qdrant vector store.
-    *   **Stage Control:** Optionally skip initial stages (`crawl_urls_file_path`, `synthesized_content_file_path`) or stop after a specific stage (`stop_after_stage: 'crawl' | 'synthesize'`).
+*   **Unified Pipeline (`get_llms_full`):** Processes documentation sources (topics, URLs, or local files/directories) through a Discovery -> Fetch -> Synthesize -> Embed -> Cleanup pipeline. While requests are processed sequentially, web discovery and content fetching within a request can run concurrently.
+   *   **Discovery:** Discovers source URLs for a topic (using Tavily) or starts from a given URL/path. Concurrently crawls linked pages if it's a web source (based on depth/limits and `BROWSER_POOL_SIZE`). Lists files if it's a local directory. Saves the list of discovered sources (URLs/paths) to a JSON file (`./data/discovery_output/<taskId>-sources.json`). (Can be skipped by providing `discovery_output_file_path`).
+   *   **Fetch:** Reads the source list. Concurrently fetches content for each source using Playwright (via `BROWSER_POOL_SIZE`) for URLs or reads local files. Extracts plain text and saves each source's content to a separate Markdown file (`./data/fetch_output/<taskId>/<sanitized_name>.md`). (Can be skipped by providing `fetch_output_dir_path`).
+   *   **Synthesize:** Reads the individual content files from the Fetch stage. Sequentially uses a configured LLM (Gemini, Ollama, OpenRouter, Chutes via `PIPELINE_LLM_*`) to generate structured markdown summaries for up to `max_llm_calls` files. Aggregates summaries into a single file (`./data/synthesize_output/<taskId>-summary.md`). (Can be skipped by providing `synthesized_content_file_path`).
+   *   **Embed:** Takes the aggregated summary file, chunks/embeds the content using the configured embedding provider (`EMBEDDING_*`), and indexes it into the Qdrant vector store.
+   *   **Cleanup:** Automatically deletes intermediate files/directories from the Discovery, Fetch, and Synthesize stages upon successful completion of the Embed stage.
+   *   **Stage Control:** Optionally skip initial stages (`discovery_output_file_path`, `fetch_output_dir_path`, `synthesized_content_file_path`) or stop after a specific stage (`stop_after_stage: 'discovery' | 'fetch' | 'synthesize'`).
 *   **Task Management:** Tools to monitor and manage pipeline tasks (`llms_full_get_task_status`, `llms_full_get_task_details`, `llms_full_cancel_task`, `llms_full_check_progress`, `llms_full_cleanup_task_store`, `llms_full_restart_task`).
-*   **Task Restart:** Restart failed `get_llms_full` tasks from a specific stage (`crawl`, `synthesize`, `embed`) using previously generated intermediate data (`llms_full_restart_task`).
-*   **Concurrency Control:** Uses locks to manage shared resources (like the browser and embedding process). Sequential processing per query avoids stage conflicts.
-*   **Robust & Configurable:** Includes API key/config management via environment variables and clear logging.
+*   **Task Restart:** Restart failed `get_llms_full` tasks from a specific stage (`discovery`, `fetch`, `synthesize`, `embed`) using previously generated intermediate data (`llms_full_restart_task`).
+*   **Concurrency Control:** Uses `p-limit` and configurable limits (`BROWSER_POOL_SIZE`, `LLM_CONCURRENCY`) for concurrent web operations (Discovery/Fetch) and LLM calls (Synthesize). Uses locks for the embedding process. Sequential processing *per query request* avoids stage conflicts for a single request.
+*   **Robust & Configurable:** Includes API key/config management via environment variables and clear logging. Intermediate files are stored in the `./data/` directory.
 
 ## Available Tools
 
@@ -36,15 +38,15 @@ This server provides the following tools:
     *   `llms_full_vector_store_search`: Search the vector store using natural language. Optionally filter by category (string or array), source URL/path pattern (`*` wildcard), and minimum score threshold (default 0.55).
 
 *   **Unified Pipeline Tool:**
-    *   `get_llms_full`: Processes one or more queries/URLs/files sequentially through crawl, synthesize, and embed stages. Accepts an array of requests, each specifying `category` and one of `topic_or_url`, `crawl_urls_file_path` (skips crawl), or `synthesized_content_file_path` (skips crawl & synthesize). Can optionally stop after a specific stage using `stop_after_stage: 'crawl' | 'synthesize'`. Returns main task IDs for tracking.
+    *   `get_llms_full`: Processes one or more queries/URLs/files/directories through the Discovery -> Fetch -> Synthesize -> Embed -> Cleanup pipeline. Accepts an array of requests, each specifying `category` and one of `topic_or_url`, `discovery_output_file_path` (skips discovery), `fetch_output_dir_path` (skips discovery & fetch), or `synthesized_content_file_path` (skips discovery, fetch & synthesize). Can optionally stop after a specific stage using `stop_after_stage: 'discovery' | 'fetch' | 'synthesize'`. Returns main task IDs for tracking. Intermediate files are stored in `./data/`.
 
 *   **Task Management Tools:**
     *   `llms_full_get_task_status`: Get the status of a specific task (e.g., `get-llms-full`) using `taskId`, or list tasks filtered by `taskType` ('get-llms-full', 'all'). Control output detail with `detail_level` ('simple', 'detailed'). Includes ETA estimation for running tasks with progress.
     *   `llms_full_get_task_details`: Get the detailed output/result string for a specific task ID (e.g., paths to intermediate files, error messages, final status).
     *   `llms_full_cancel_task`: Attempts to cancel running/queued task(s). Provide EITHER a specific `taskId` OR set `all: true` to cancel all active `get-llms-full` tasks.
-    *   `llms_full_check_progress`: Provides a summary report of `get-llms-full` tasks, categorized by status (completed, running, queued, failed, cancelled) and showing the current stage (Crawl, Synthesize, Embed) and progress [X/Y] for the running task.
-    *   `llms_full_cleanup_task_store`: Removes tasks from the internal task list. By default removes completed, failed, and cancelled tasks. Optionally removes specific tasks by ID using the `taskIds` array parameter.
-    *   `llms_full_restart_task`: Prepares a request to restart a failed `get-llms-full` task from a specific stage (`crawl`, `synthesize`, or `embed`) using previously generated data if available. Takes `failed_task_id` and `restart_stage`. Returns the parameters needed to call `get_llms_full` for the restart.
+    *   `llms_full_check_progress`: Provides a summary report of `get-llms-full` tasks, categorized by status (completed, running, queued, failed, cancelled) and showing the current stage (Discovery, Fetch, Synthesize, Embed, Cleanup) and progress [X/Y] for the running task.
+    *   `llms_full_cleanup_task_store`: Removes tasks from the internal task list. By default removes completed, failed, and cancelled tasks. Optionally removes specific tasks by ID using the `taskIds` array parameter. (Note: Does not delete intermediate files from disk).
+    *   `llms_full_restart_task`: Prepares a request to restart a failed `get-llms-full` task from a specific stage (`discovery`, `fetch`, `synthesize`, or `embed`) using previously generated intermediate data if available. Takes `failed_task_id` and `restart_stage`. Returns the parameters needed to call `get_llms_full` for the restart.
 
 *   **Utilities:**
     *   `llms_full_util_extract_urls`: Utility to extract same-origin URLs from a webpage. Can find shallower links (controlled by `maxDepth`).
@@ -136,6 +138,11 @@ Set these variables directly in your shell, using a `.env` file in the server's 
     *   `QDRANT_URL`: URL of your Qdrant instance (e.g., `http://localhost:6333`). **Required for llms-full.**
     *   `QDRANT_API_KEY`: (Optional) API key for Qdrant Cloud or secured instances.
 
+*   **Browser Pool:**
+    *   `BROWSER_POOL_SIZE`: (Optional) Number of concurrent browser pages to use for crawling and content extraction. Defaults to `5`. Increase cautiously (up to a maximum of `50`) for faster processing of many URLs, but monitor RAM/CPU usage. Values below 1 are treated as 1.
+   *   `LLM_CONCURRENCY`: (Optional) Number of concurrent LLM API calls during the Synthesize stage. Defaults to `3`. Increase cautiously based on LLM provider rate limits. Values below 1 are treated as 1.
+   *   `QDRANT_BATCH_SIZE`: (Optional) Number of points to send in each batch during Qdrant upsert in the Embed stage. Defaults to `100`. Decrease if encountering payload size limits, increase cautiously for potentially faster indexing. Values below 1 are treated as 1.
+
 ### MCP Client Configuration (Example)
 
 Add/modify the entry in your client's MCP configuration file:
@@ -168,7 +175,10 @@ Add/modify the entry in your client's MCP configuration file:
         // "QDRANT_API_KEY": "YOUR_QDRANT_KEY",
         // "OPENAI_BASE_URL": "https://api.together.xyz/v1",
         // "EMBEDDING_MODEL": "models/embedding-001", // Default depends on EMBEDDING_PROVIDER
-        // "GEMINI_FALLBACK_MODEL": "text-embedding-004"
+        // "GEMINI_FALLBACK_MODEL": "text-embedding-004",
+        "BROWSER_POOL_SIZE": "10", // Example: Allow up to 10 concurrent browser pages (Default is 5)
+        "LLM_CONCURRENCY": "10", // Example: Allow up to 10 concurrent LLM calls (Default is 3)
+        "QDRANT_BATCH_SIZE": "100" // Example: Use default batch size
       }
     }
   }
@@ -181,18 +191,18 @@ Add/modify the entry in your client's MCP configuration file:
 
 *   "Use `tavily_search` to find recent news about vector databases."
 *   "Process documentation for 'shadcn ui' under category 'shadcn' using `get_llms_full`." (Note the task ID)
-*   "Process documentation for 'Radix UI' but stop after the crawl stage using `get_llms_full` with `stop_after_stage: 'crawl'`."
-*   "Process documentation using a pre-existing URL list file `path/to/urls.json` for category 'react' using `get_llms_full` with the `crawl_urls_file_path` parameter."
-*   "Process documentation using a pre-existing URL list file `path/to/urls.json` for category 'react' but stop after synthesis using `get_llms_full` with `crawl_urls_file_path` and `stop_after_stage: 'synthesize'`."
-*   "Process documentation using a pre-synthesized content file `path/to/content.md` for category 'nextjs' using `get_llms_full` with the `synthesized_content_file_path` parameter (runs embed only)."
+*   "Process documentation for 'Radix UI' but stop after the discovery stage using `get_llms_full` with `stop_after_stage: 'discovery'`."
+*   "Process documentation using a pre-existing source list file `./data/discovery_output/task123-sources.json` for category 'react' using `get_llms_full` with the `discovery_output_file_path` parameter (skips discovery)."
+*   "Process documentation using a pre-existing fetched content directory `./data/fetch_output/task123/` for category 'vue' using `get_llms_full` with the `fetch_output_dir_path` parameter (skips discovery & fetch)."
+*   "Process documentation using a pre-synthesized content file `./data/synthesize_output/task123-summary.md` for category 'nextjs' using `get_llms_full` with the `synthesized_content_file_path` parameter (runs embed & cleanup only)."
 *   "Check the overall progress of tasks using `llms_full_check_progress`."
 *   "Get the status for task 'get-llms-full-xxxxxxxx-...' using `llms_full_get_task_status`."
-*   "Get the detailed results file path for completed task 'get-llms-full-xxxxxxxx-...' using `llms_full_get_task_details`."
+*   "Get the detailed results (e.g., intermediate file paths) for task 'get-llms-full-xxxxxxxx-...' using `llms_full_get_task_details`."
 *   "Cancel task 'get-llms-full-xxxxxxxx-...' using `llms_full_cancel_task`."
 *   "Cancel all active `get-llms-full` tasks using `llms_full_cancel_task` with `all: true`."
-*   "Clean up finished tasks from the store using `llms_full_cleanup_task_store`."
-*   "Remove specific tasks 'get-llms-full-xxxx', 'get-llms-full-yyyy' using `llms_full_cleanup_task_store` with the `taskIds` parameter."
-*   "If task 'get-llms-full-zzzz' failed during synthesis, prepare a restart request using `llms_full_restart_task` with `failed_task_id: 'get-llms-full-zzzz'` and `restart_stage: 'synthesize'`. Then use the output to call `get_llms_full`."
+*   "Clean up finished tasks from the *internal task list* using `llms_full_cleanup_task_store` (does not delete files)."
+*   "Remove specific tasks 'get-llms-full-xxxx', 'get-llms-full-yyyy' from the *internal task list* using `llms_full_cleanup_task_store` with the `taskIds` parameter."
+*   "If task 'get-llms-full-zzzz' failed during synthesize, prepare a restart request using `llms_full_restart_task` with `failed_task_id: 'get-llms-full-zzzz'` and `restart_stage: 'synthesize'`. Then use the output to call `get_llms_full`."
 *   "List documentation categories using `llms_full_vector_store_list_categories`."
 *   "Search the documentation for 'state management' in the 'react' category using `llms_full_vector_store_search`."
 *   "Ask 'how to integrate shadcn buttons with react-hook-form' using `llms_full_synthesize_answer_from_docs`."

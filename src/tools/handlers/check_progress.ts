@@ -10,7 +10,7 @@ interface ProgressSummary {
     failed: number;
     cancelled: number;
     // Store details for the single running get-llms-full task, if any
-    runningStage?: 'Crawl' | 'Synthesize' | 'Embed' | 'Unknown';
+    runningStage?: 'Discovery' | 'Fetch' | 'Synthesize' | 'Embed' | 'Cleanup' | 'Unknown'; // Added new stages
     runningTaskProgressCurrent?: number;
     runningTaskProgressTotal?: number;
 }
@@ -46,14 +46,20 @@ export class CheckProgressHandler extends BaseHandler {
                     if (taskType === 'get-llms-full') {
                         typeSummary.runningTaskProgressCurrent = taskInfo.progressCurrent;
                         typeSummary.runningTaskProgressTotal = taskInfo.progressTotal;
-                        typeSummary.runningStage = 'Unknown'; // Default
-                        // Check for patterns indicating the stage
-                        if (taskInfo.details.includes('Crawling') || taskInfo.details.includes('Crawl Stage:')) {
-                            typeSummary.runningStage = 'Crawl';
-                        } else if (taskInfo.details.includes('LLM Stage:') || taskInfo.details.includes('Synthesize Stage:')) {
-                            typeSummary.runningStage = 'Synthesize';
-                        } else if (taskInfo.details.includes('Embedding') || taskInfo.details.includes('Embed Stage:')) {
-                            typeSummary.runningStage = 'Embed';
+                        // Prioritize the dedicated stage field
+                        if (taskInfo.currentStage) {
+                             // Map the stored stage name directly (ensure casing matches enum/expected values)
+                             const stageName = taskInfo.currentStage.charAt(0).toUpperCase() + taskInfo.currentStage.slice(1);
+                             typeSummary.runningStage = stageName as ('Discovery' | 'Fetch' | 'Synthesize' | 'Embed' | 'Cleanup');
+                        } else {
+                            // Fallback to parsing details if currentStage is not set (should be rare)
+                            typeSummary.runningStage = 'Unknown'; // Default
+                            const detailsLower = taskInfo.details.toLowerCase();
+                            if (detailsLower.includes('discovery stage:')) { typeSummary.runningStage = 'Discovery'; }
+                            else if (detailsLower.includes('fetch stage:')) { typeSummary.runningStage = 'Fetch'; }
+                            else if (detailsLower.includes('synthesize stage:')) { typeSummary.runningStage = 'Synthesize'; }
+                            else if (detailsLower.includes('embed stage:') || detailsLower.includes('embedding stage:')) { typeSummary.runningStage = 'Embed'; }
+                            else if (detailsLower.includes('cleanup stage:')) { typeSummary.runningStage = 'Cleanup'; }
                         }
                     }
                     break;

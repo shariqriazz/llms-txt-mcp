@@ -5,14 +5,15 @@ import { marked } from 'marked';
 import mammoth from 'mammoth';
 import * as cheerio from 'cheerio';
 import { ApiClient } from '../api-client.js'; // Need ApiClient for browser access
-import * as PipelineState from '../../pipeline_state.js'; // Need for browser lock
+// Remove PipelineState import as browser lock is handled by ApiClient.withPage
+// import * as PipelineState from '../../pipeline_state.js';
 
 type LogFunction = (level: 'error' | 'debug' | 'info' | 'notice' | 'warning' | 'critical' | 'alert' | 'emergency', data: any) => void;
 
 /**
  * Extracts text content from a given URL or local file path.
  * Handles HTML scraping, Markdown parsing, and DOCX extraction.
- * Manages browser instance and locking for URL fetching.
+ * Uses ApiClient's managed browser pages for URL fetching.
  * @param sourceUrlOrPath The URL or local file path.
  * @param apiClient The ApiClient instance (for browser access).
  * @param safeLog Optional logging function.
@@ -42,6 +43,7 @@ export async function extractTextContent(
     }
 
     if (isLocalPath) {
+      safeLog?.('debug', `Extracting content from local file: ${sourceIdentifier}`);
       const ext = path.extname(sourceIdentifier).toLowerCase();
       const fileBuffer = await fs.readFile(sourceIdentifier);
       if (ext === '.md') {
@@ -52,44 +54,30 @@ export async function extractTextContent(
         const result = await mammoth.extractRawText({ buffer: fileBuffer });
         extractedText = result.value;
       } else {
+        // Assume plain text for other types
         extractedText = fileBuffer.toString('utf-8');
       }
     } else { // It's a URL
-      let browser = apiClient?.browser;
-      if (!browser) {
-        safeLog?.('debug', 'Initializing temporary browser for extraction...');
-        await apiClient.initBrowser(); // Ensure browser is initialized
-        browser = apiClient.browser;
-      }
-
-      if (!browser) {
-        throw new Error("Browser instance could not be initialized.");
-      }
-
-      // Lock acquisition is now handled by the caller (e.g., llm_processor)
-      // if (!PipelineState.acquireBrowserLock()) {
-      //     safeLog?.('warning', `Failed to acquire browser lock for ${sourceUrlOrPath}. Retrying might be needed.`);
-      //     throw new Error("Could not acquire browser lock for URL content extraction.");
-      // }
-
-      const page = await browser.newPage();
-      try {
+      safeLog?.('debug', `Extracting content from URL using browser pool: ${sourceUrlOrPath}`);
+      // Use the managed page from ApiClient
+      extractedText = await apiClient.withPage(async (page) => {
         safeLog?.('debug', `Scraping URL: ${sourceUrlOrPath}`);
         await page.goto(sourceUrlOrPath, { waitUntil: 'domcontentloaded', timeout: 60000 });
         const pageContent = await page.content();
         const $ = cheerio.load(pageContent);
-        extractedText = $('body').text();
-        extractedText = extractedText.replace(/\s\s+/g, ' ').trim();
-      } finally {
-        await page.close();
-        // Lock release is now handled by the caller
-        // PipelineState.releaseBrowserLock(); // Release browser lock after scraping
-        // safeLog?.('debug', `Released browser lock after scraping ${sourceUrlOrPath}`);
-      }
+        let text = $('body').text();
+        // Basic cleanup
+        text = text.replace(/\s\s+/g, ' ').trim();
+        return text;
+      });
     }
 
     if (!extractedText || extractedText.trim().length === 0) {
+      // Log warning instead of throwing immediately? Depends on desired behavior.
+      // For now, keep throwing as it indicates a failure to get usable content.
+      safeLog?.('warning', `No text content extracted from ${sourceUrlOrPath}`);
       throw new Error(`No text content extracted from ${sourceUrlOrPath}`);
     }
+    safeLog?.('debug', `Extracted content length from ${sourceUrlOrPath}: ${extractedText.length}`);
     return extractedText;
 }

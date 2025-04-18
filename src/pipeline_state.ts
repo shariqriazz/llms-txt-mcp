@@ -11,7 +11,7 @@ let isSynthesizeLlmsFullToolBusy: boolean = false; // Renamed lock for the 'synt
 let isEmbedToolBusy: boolean = false;    // Lock for the 'embed' tool
 
 // --- Resource Locks ---
-let isBrowserBusy: boolean = false;      // Shared browser resource lock
+// isBrowserBusy removed, managed by ApiClient page pool
 
 // --- Legacy Locks (Potentially remove later) ---
 let isLLMBusy: boolean = false;          // Legacy LLM stage lock?
@@ -88,17 +88,8 @@ export function releaseEmbeddingLock(): void { // Keep for potential legacy use
 
 // --- Resource Lock Management ---
 
-// Browser Lock
-export function isBrowserFree(): boolean { return !isBrowserBusy; }
-export function acquireBrowserLock(): boolean {
-    if (!isBrowserBusy) { isBrowserBusy = true; return true; } return false;
-}
-export function releaseBrowserLock(): void {
-    isBrowserBusy = false;
-    // Releasing browser doesn't directly trigger pipeline stages,
-    // but stages waiting for it might now succeed on their next check.
-    triggerNextPipelineSteps(); // Trigger a general check
-}
+// Browser Lock functions removed (isBrowserFree, acquireBrowserLock, releaseBrowserLock)
+// Concurrency is now handled by ApiClient.withPage and its internal p-limit instance.
 
 
 // --- Tool Queue Management ---

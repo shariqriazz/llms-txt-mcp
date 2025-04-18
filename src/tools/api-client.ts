@@ -1,5 +1,7 @@
 import { QdrantClient } from '@qdrant/js-client-rest';
-import { chromium } from 'playwright';
+import { chromium, Browser, Page } from 'playwright'; // Import types
+import pLimit from 'p-limit'; // Import p-limit
+// No separate import for Limit needed if using ReturnType
 import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import { EmbeddingService } from './embeddings.js';
 import type { QdrantCollectionInfo } from './types.js';
@@ -14,21 +16,25 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_FALLBACK_MODEL = process.env.GEMINI_FALLBACK_MODEL;
 const QDRANT_URL = process.env.QDRANT_URL || 'http://127.0.0.1:6333';
 const QDRANT_API_KEY = process.env.QDRANT_API_KEY;
-
+// Read Browser Pool Size, default to 5, min 1, max 50
+let parsedPoolSize = parseInt(process.env.BROWSER_POOL_SIZE || '5', 10);
+if (isNaN(parsedPoolSize)) parsedPoolSize = 5;
+const BROWSER_POOL_SIZE = Math.min(Math.max(1, parsedPoolSize), 50);
 
 export class ApiClient {
   qdrantClient: QdrantClient;
-  browser: any;
   private embeddingService: EmbeddingService;
+  private browser: Browser | null = null; // Use Browser type, initialize to null
+  private browserLimiter: ReturnType<typeof pLimit>; // Use ReturnType<typeof pLimit>
 
   constructor() {
-    // Initialize Qdrant client (URL required, API key optional)
+    // Initialize Qdrant client
     this.qdrantClient = new QdrantClient({
       url: QDRANT_URL,
       apiKey: QDRANT_API_KEY,
     });
 
-    // Initialize EmbeddingService from environment configuration
+    // Initialize EmbeddingService
     try {
         this.embeddingService = EmbeddingService.createFromConfig({
             provider: EMBEDDING_PROVIDER,
@@ -41,30 +47,76 @@ export class ApiClient {
         console.error(`ApiClient initialized with embedding provider: ${EMBEDDING_PROVIDER}`);
     } catch (error) {
         console.error("Failed to initialize EmbeddingService:", error);
-        throw new Error(`Failed to initialize EmbeddingService: ${error instanceof Error ? error.message : error}`);
+        throw new Error(`Failed to initialize EmbeddingService: ${error instanceof Error ? error.message : String(error)}`);
     }
 
+    // Initialize browser limiter
+    console.error(`Initializing browser concurrency limit to: ${BROWSER_POOL_SIZE}`);
+    this.browserLimiter = pLimit(BROWSER_POOL_SIZE);
   }
 
-  async initBrowser() {
+  // Ensures the browser instance is launched, called internally by withPage
+  private async initBrowser() {
+    // Add a simple lock to prevent race conditions during initialization
+    if ((this as any)._browserInitPromise) {
+        await (this as any)._browserInitPromise;
+        return;
+    }
     if (!this.browser) {
-      try {
-        console.error("Initializing Playwright Chromium browser...");
-        this.browser = await chromium.launch();
-        console.error("Browser initialized successfully.");
-      } catch (error: any) {
-        console.error("Failed to launch Playwright browser:", error);
-        this.browser = null;
-        throw new Error(`Failed to initialize browser: ${error.message}`);
-      }
-    } else {
+        (this as any)._browserInitPromise = (async () => {
+            try {
+                console.error("Initializing Playwright Chromium browser instance...");
+                this.browser = await chromium.launch();
+                console.error("Browser instance initialized successfully.");
+            } catch (error: any) {
+                console.error("Failed to launch Playwright browser:", error);
+                this.browser = null; // Ensure it's null on failure
+                throw new Error(`Failed to initialize browser: ${error.message}`);
+            } finally {
+                delete (this as any)._browserInitPromise;
+            }
+        })();
+        await (this as any)._browserInitPromise;
     }
   }
+
+  /**
+   * Executes a function with a managed Playwright page, respecting concurrency limits.
+   * Ensures the browser is initialized and the page is closed afterwards.
+   * @param fn The async function to execute, receiving a Page object.
+   * @returns The result of the provided function.
+   */
+  async withPage<T>(fn: (page: Page) => Promise<T>): Promise<T> {
+    return this.browserLimiter(async () => {
+      await this.initBrowser(); // Ensure browser is ready
+      if (!this.browser) {
+        throw new Error("Browser instance is not available.");
+      }
+
+      let page: Page | null = null;
+      try {
+        page = await this.browser.newPage();
+        return await fn(page);
+      } finally {
+        if (page) {
+          try {
+            await page.close();
+          } catch (closeError) {
+            console.error("Error closing page:", closeError);
+            // Decide if we need to handle this more drastically, e.g., restart browser?
+          }
+        }
+      }
+    });
+  }
+
 
   async cleanup() {
     if (this.browser) {
+      console.error("Closing Playwright browser instance...");
       await this.browser.close();
       this.browser = null; // Reset the browser instance variable
+      console.error("Browser instance closed.");
     }
   }
 
@@ -75,7 +127,7 @@ export class ApiClient {
         console.error(`Error generating embeddings via ${EMBEDDING_PROVIDER}:`, error);
         throw new McpError(
             ErrorCode.InternalError,
-            `Failed to generate embeddings: ${error instanceof Error ? error.message : error}`
+            `Failed to generate embeddings: ${error instanceof Error ? error.message : String(error)}`
         );
     }
   }
@@ -171,7 +223,7 @@ export class ApiClient {
               message = `Qdrant error during collection ${context}: ${error.message}`;
           }
       } else {
-          message = `Unknown Qdrant error during collection ${context}: ${error}`;
+          message = `Unknown Qdrant error during collection ${context}: ${String(error)}`;
       }
       throw new McpError(code, message);
   }

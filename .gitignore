@@ -1,6 +1,9 @@
 # Node dependencies
 node_modules/
 
+# Intermediate data and task store
+data/
+
 # Bun lockfile
 bun.lock
 

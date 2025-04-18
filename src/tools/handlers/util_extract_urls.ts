@@ -57,8 +57,9 @@ export class UtilExtractUrlsHandler extends BaseHandler {
       throw new McpError(ErrorCode.InvalidParams, 'URL is required');
     }
 
-    await this.apiClient.initBrowser();
-    const page = await this.apiClient.browser.newPage();
+    // No longer need to manage browser/page directly here
+    // await this.apiClient.initBrowser();
+    // const page = await this.apiClient.browser.newPage();
 
     try {
       const inputUrl = new URL(args.url);
@@ -68,10 +69,12 @@ export class UtilExtractUrlsHandler extends BaseHandler {
 
       this.safeLog?.('info', `Extracting URLs from ${args.url} with maxDepth=${args.maxDepth}`);
 
-      // --- 1. Extract links from the initial page ---
-      await page.goto(args.url, { waitUntil: 'networkidle' });
-      const initialContent = await page.content();
-      const initialLinks = this._extractLinksFromHtml(initialContent, args.url);
+      // --- 1. Extract links from the initial page using withPage ---
+      const initialLinks = await this.apiClient.withPage(async (page) => {
+          await page.goto(args.url, { waitUntil: 'networkidle' }); // Use networkidle for potentially dynamic pages
+          const initialContent = await page.content();
+          return this._extractLinksFromHtml(initialContent, args.url);
+      });
       this.safeLog?.('debug', `Found ${initialLinks.size} initial links on ${args.url}`);
 
       // Filter initial links based on maxDepth (relative to input path)
@@ -108,10 +111,9 @@ export class UtilExtractUrlsHandler extends BaseHandler {
       let parentFetchFailed = false;
       let searchFallbackUsed = false;
 
-      // --- 2. Attempt to fetch parent page ---
+      // --- 2. Attempt to fetch parent page using withPage ---
       let parentUrlStr: string | null = null;
       if (inputDepth > 0) {
-        // Construct parent URL string (handle trailing slash if needed)
         const parentPath = '/' + inputPathSegments.slice(0, -1).join('/') + (inputPathSegments.length > 1 ? '/' : '');
         parentUrlStr = new URL(parentPath, inputUrl.origin).href;
         this.safeLog?.('debug', `Calculated parent URL: ${parentUrlStr}`);
@@ -123,17 +125,13 @@ export class UtilExtractUrlsHandler extends BaseHandler {
       if (parentUrlStr) {
         try {
           this.safeLog?.('info', `Attempting to fetch parent page: ${parentUrlStr}`);
-          // Use apiClient's browser instance if possible, or create a new page
-          const parentPage = await this.apiClient.browser.newPage();
-          try {
-              await parentPage.goto(parentUrlStr, { waitUntil: 'networkidle' });
+          const parentLinks = await this.apiClient.withPage(async (parentPage) => {
+              await parentPage.goto(parentUrlStr!, { waitUntil: 'networkidle' }); // Use networkidle
               const parentContent = await parentPage.content();
-              const parentLinks = this._extractLinksFromHtml(parentContent, parentUrlStr);
-              this.safeLog?.('debug', `Found ${parentLinks.size} links on parent page ${parentUrlStr}`);
-              parentLinks.forEach(link => potentialShallowLinks.add(link));
-          } finally {
-              await parentPage.close();
-          }
+              return this._extractLinksFromHtml(parentContent, parentUrlStr!);
+          });
+          this.safeLog?.('debug', `Found ${parentLinks.size} links on parent page ${parentUrlStr}`);
+          parentLinks.forEach(link => potentialShallowLinks.add(link));
         } catch (error: any) {
           this.safeLog?.('warning', `Failed to fetch or parse parent page ${parentUrlStr}: ${error.message}`);
           parentFetchFailed = true;
@@ -141,8 +139,6 @@ export class UtilExtractUrlsHandler extends BaseHandler {
       }
 
       // --- 3. Search Fallback ---
-      // Check if parent fetch failed OR if no potentially shallower links were found on parent
-      // (We'll filter for actual shallowness later, but this triggers search if parent was unhelpful)
       if (parentFetchFailed || potentialShallowLinks.size === 0) {
          this.safeLog?.('info', `Parent fetch failed or yielded no links. Triggering search fallback for ${inputHost}.`);
          searchFallbackUsed = true;
@@ -161,7 +157,6 @@ export class UtilExtractUrlsHandler extends BaseHandler {
                 searchResponse.results.forEach((result: TavilySearchResult) => {
                     if (result.url) {
                         try {
-                           // Basic validation and normalization before adding
                            const searchUrl = new URL(result.url);
                            if(searchUrl.hostname === inputHost && !searchUrl.hash && !searchUrl.href.endsWith('#')) {
                                potentialShallowLinks.add(searchUrl.href);
@@ -188,7 +183,6 @@ export class UtilExtractUrlsHandler extends BaseHandler {
       combinedUrls.forEach(linkStr => {
         try {
           const linkUrl = new URL(linkStr);
-          // Final Filter: Same host AND path depth <= input depth
           if (linkUrl.hostname === inputHost) {
             const linkSegments = linkUrl.pathname.split('/').filter(Boolean);
             const linkDepth = linkSegments.length;
@@ -209,33 +203,23 @@ export class UtilExtractUrlsHandler extends BaseHandler {
       if (args.add_to_queue) {
         try {
           // Ensure queue file exists
-          try {
-            await fs.access(QUEUE_FILE);
-          } catch {
-            await fs.writeFile(QUEUE_FILE, '');
-          }
-
+          try { await fs.access(QUEUE_FILE); } catch { await fs.writeFile(QUEUE_FILE, ''); }
           // Append URLs to queue
           const urlsToAdd = uniqueFinalUrls.join('\n') + (uniqueFinalUrls.length > 0 ? '\n' : '');
           await fs.appendFile(QUEUE_FILE, urlsToAdd);
-
           return {
-            content: [
-              {
+            content: [{
                 type: 'text',
                 text: `Successfully added ${uniqueFinalUrls.length} URLs (maxDepth=${args.maxDepth}, parentFetch=${!parentFetchFailed}, searchFallback=${searchFallbackUsed}) to the queue`,
-              },
-            ],
+            }],
           };
         } catch (error: any) {
           this.safeLog?.('error', `Failed to add URLs to queue: ${error.message || error}`);
           return {
-            content: [
-              {
+            content: [{
                 type: 'text',
                 text: `Found ${uniqueFinalUrls.length} URLs but failed to add to queue: ${error.message || error}`,
-              },
-            ],
+            }],
             isError: true,
           };
         }
@@ -243,29 +227,24 @@ export class UtilExtractUrlsHandler extends BaseHandler {
 
       // Return the found URLs if not adding to queue
       return {
-        content: [
-          {
+        content: [{
             type: 'text',
             text: uniqueFinalUrls.length > 0
               ? `Found ${uniqueFinalUrls.length} URLs (maxDepth=${args.maxDepth}, parentFetch=${!parentFetchFailed}, searchFallback=${searchFallbackUsed}):\n${uniqueFinalUrls.join('\n')}`
               : `No URLs found matching criteria (maxDepth=${args.maxDepth}, parentFetch=${!parentFetchFailed}, searchFallback=${searchFallbackUsed}).`,
-          },
-        ],
+        }],
       };
     } catch (error: any) {
       this.safeLog?.('error', `Failed to extract URLs: ${error.message || error}`);
       return {
-        content: [
-          {
+        content: [{
             type: 'text',
             text: `Failed to extract URLs: ${error.message || error}`,
-          },
-        ],
+        }],
         isError: true,
       };
-    } finally {
-      await page.close();
-      await this.apiClient.cleanup(); // Ensure browser is closed and reset
     }
+    // No finally block needed here as withPage handles page closing
+    // and cleanup should happen at server shutdown
   }
 }

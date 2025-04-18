@@ -1,14 +1,22 @@
 import { URL } from 'url';
 import * as cheerio from 'cheerio';
+import pLimit from 'p-limit'; // Import p-limit
 import { ApiClient } from '../api-client.js'; // For browser page access
-import * as PipelineState from '../../pipeline_state.js'; // For browser lock
+// Remove PipelineState import as browser lock is handled by ApiClient.withPage
+// import * as PipelineState from '../../pipeline_state.js';
 import { isTaskCancelled, updateTaskDetails } from '../../tasks.js'; // For cancellation check and progress updates
 import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 
 // Define LogFunction type (or import if shared)
 type LogFunction = (level: 'error' | 'debug' | 'info' | 'notice' | 'warning' | 'critical' | 'alert' | 'emergency', data: any) => void;
 
+// Read Browser Pool Size, default to 5, min 1, max 50
+let parsedPoolSize = parseInt(process.env.BROWSER_POOL_SIZE || '5', 10);
+if (isNaN(parsedPoolSize)) parsedPoolSize = 5;
+const BROWSER_POOL_SIZE = Math.min(Math.max(1, parsedPoolSize), 50);
+
 // --- Link Extraction Logic (Internal Helper) ---
+// (Remains the same)
 function _extractLinksFromHtml(htmlContent: string, pageUrlStr: string, baseUrl: URL, safeLog?: LogFunction): Set<string> {
     const extractedUrls = new Set<string>();
     const $ = cheerio.load(htmlContent);
@@ -32,7 +40,7 @@ function _extractLinksFromHtml(htmlContent: string, pageUrlStr: string, baseUrl:
 
 
 /**
- * Crawls a website starting from a given URL to discover relevant documentation links.
+ * Crawls a website starting from a given URL to discover relevant documentation links concurrently.
  * @param taskId The ID of the parent task for status updates and cancellation checks.
  * @param start_url The initial URL to begin crawling.
  * @param crawl_depth Maximum depth to crawl relative to the start URL.
@@ -50,11 +58,15 @@ export async function crawlWebsite(
     apiClient: ApiClient,
     safeLog?: LogFunction
 ): Promise<string[]> {
-    updateTaskDetails(taskId, `Starting crawl from ${start_url} (Depth: ${crawl_depth}, Max URLs: ${max_urls})...`);
+    updateTaskDetails(taskId, `Starting crawl from ${start_url} (Depth: ${crawl_depth}, Max URLs: ${max_urls}, Concurrency: ${BROWSER_POOL_SIZE})...`);
     const sourceUrlObj = new URL(start_url);
-    const urlsFound = new Set<string>([start_url]);
-    const queue: { url: string; depth: number }[] = [{ url: start_url, depth: 0 }];
-    const visited = new Set<string>([start_url]);
+    const urlsFound = new Set<string>([start_url]); // Stores all valid URLs found
+    const visited = new Set<string>([start_url]); // Stores URLs that have been processed or added to queue
+    let currentQueue: { url: string; depth: number }[] = [{ url: start_url, depth: 0 }]; // URLs to process in the current level/batch
+    let crawledCount = 0; // Track total pages processed for logging/updates
+
+    // Initialize concurrency limiter
+    const limit = pLimit(BROWSER_POOL_SIZE);
 
     // Regexes for filtering URLs (consider making these configurable)
     const docKeywordRegexes = [
@@ -85,78 +97,87 @@ export async function crawlWebsite(
     ];
     const ignoreExtensions = ['.zip', '.pdf', '.png', '.jpg', '.jpeg', '.gif', '.svg', '.css', '.js', '.xml', '.ico', '.webmanifest', '.json', '.txt', '.woff', '.woff2', '.ttf', '.eot', '.mp3', '.mp4', '.mov', '.avi', '.wmv', '.flv', '.mkv', '.webm', '.ogg', '.wav', '.aac', '.m4a', '.flac', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.csv', '.tsv', '.odt', '.ods', '.odp', '.pages', '.numbers', '.key', '.rtf', '.md', '.markdown', '.yaml', '.yml', '.toml', '.ini', '.cfg', '.config', '.conf', '.properties', '.env', '.bak', '.backup', '.tmp', '.temp', '.cache', '.log', '.logs', '.lock', '.swp', '.swo', '.swn', '.gitignore', '.gitattributes', '.gitmodules', '.npmignore', '.npmrc', '.nvmrc', '.eslintrc', '.eslintignore', '.prettierrc', '.prettierignore', '.babelrc', '.editorconfig', '.travis.yml', '.github', '.gitlab', '.vscode', '.idea', '.DS_Store', '.htaccess', '.htpasswd', '.well-known', '.map', '.min', '.min.js', '.min.css', '.bundle.js', '.bundle.css', '.chunk.js', '.chunk.css', '.module.js', '.module.css', '.test.js', '.spec.js', '.fixture.js'];
     const languagePathRegex = /\/(?!en|en-[a-z]{2})[a-z]{2}(?:-[a-z]{2})?\//i;
-    let crawledCount = 0;
 
-    // Acquire browser lock for the duration of the crawl stage
-    // Note: The caller (_crawlStage) already acquires this lock, so we don't need it here.
-    // If this function were called independently, it *would* need lock management.
-    // if (!PipelineState.acquireBrowserLock()) {
-    //     throw new Error("Could not acquire browser lock for crawling.");
-    // }
+    while (currentQueue.length > 0 && urlsFound.size < max_urls) {
+        if (isTaskCancelled(taskId)) {
+            updateTaskDetails(taskId, 'Cancellation requested during crawling.');
+            safeLog?.('info', `[${taskId}] Cancellation requested during crawling phase.`);
+            throw new McpError(ErrorCode.InternalError, `LLMS Full generation task ${taskId} cancelled by user during crawling.`);
+        }
 
-    try {
-        while (queue.length > 0 && urlsFound.size < max_urls) {
-            if (isTaskCancelled(taskId)) {
-                updateTaskDetails(taskId, 'Cancellation requested during crawling.');
-                safeLog?.('info', `[${taskId}] Cancellation requested during crawling phase.`);
-                throw new McpError(ErrorCode.InternalError, `LLMS Full generation task ${taskId} cancelled by user during crawling.`); // Updated message
-            }
-            crawledCount++;
-            if (crawledCount % 5 === 0 || queue.length === 0) {
-                // Update details with X/Y format for progress parsing
-                updateTaskDetails(taskId, `Crawling ${urlsFound.size}/${max_urls}`);
-            }
+        const processingPromises: Promise<void>[] = [];
+        const nextQueue: { url: string; depth: number }[] = []; // Collect URLs for the next level
 
-            const current = queue.shift();
-            // Filter based on depth, keywords, and extensions
-            if (!current || current.depth >= crawl_depth || ignoreKeywordRegexes.some(regex => regex.test(current.url)) || ignoreExtensions.some(ext => current.url.toLowerCase().endsWith(ext))) {
-                if (current) safeLog?.('debug', `[${taskId}] Skipping crawl (depth/ignore regex/extension): ${current.url}`);
+        // Update progress before starting the batch
+        updateTaskDetails(taskId, `Crawling level (Depth ${currentQueue[0]?.depth || 0}): Processing ${currentQueue.length} URLs, Found ${urlsFound.size}/${max_urls}...`);
+
+        for (const current of currentQueue) {
+            // Check limits and filters *before* scheduling the task
+            if (urlsFound.size >= max_urls) break;
+
+            if (current.depth >= crawl_depth || ignoreKeywordRegexes.some(regex => regex.test(current.url)) || ignoreExtensions.some(ext => current.url.toLowerCase().endsWith(ext))) {
+                safeLog?.('debug', `[${taskId}] Skipping pre-crawl (depth/ignore regex/extension): ${current.url}`);
                 continue;
             }
 
-            // Ensure browser is available (should be initialized by caller)
-            if (!apiClient.browser) {
-                 throw new Error("Browser not available for crawling page.");
-            }
+            processingPromises.push(limit(async () => {
+                if (isTaskCancelled(taskId) || urlsFound.size >= max_urls) return; // Check again inside limiter
 
-            const page = await apiClient.browser.newPage();
-            try {
-                safeLog?.('debug', `[${taskId}] Crawling: ${current.url} at depth ${current.depth}`);
-                await page.goto(current.url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-                const content = await page.content();
-                const links = _extractLinksFromHtml(content, current.url, sourceUrlObj, safeLog);
+                crawledCount++;
+                try {
+                    const links = await apiClient.withPage(async (page) => {
+                        safeLog?.('debug', `[${taskId}] Crawling: ${current.url} at depth ${current.depth}`);
+                        await page.goto(current.url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+                        const content = await page.content();
+                        return _extractLinksFromHtml(content, current.url, sourceUrlObj, safeLog);
+                    });
 
-                for (const link of links) {
-                    if (!visited.has(link) && urlsFound.size < max_urls) {
-                        const lowerLink = link.toLowerCase();
-                        // Filter out ignored keywords, extensions, and non-English paths
-                        if (
-                            ignoreKeywordRegexes.some(regex => regex.test(link)) ||
-                            ignoreExtensions.some(ext => lowerLink.endsWith(ext)) ||
-                            languagePathRegex.test(lowerLink)
-                        ) {
-                            safeLog?.('debug', `[${taskId}] Ignoring filtered link (keyword/extension/language): ${link}`);
-                            continue;
-                        }
-                        // Add if it looks like a doc link OR if we haven't reached max depth
-                        if (docKeywordRegexes.some(regex => regex.test(link)) || current.depth < crawl_depth) {
-                            visited.add(link);
-                            urlsFound.add(link);
-                            queue.push({ url: link, depth: current.depth + 1 });
-                        } else {
-                            safeLog?.('debug', `[${taskId}] Ignoring non-doc-like link at max depth: ${link}`);
+                    // Process extracted links (needs synchronization for shared sets)
+                    for (const link of links) {
+                        // Lock or careful management needed if Set operations aren't atomic enough under high concurrency
+                        // For simplicity here, assuming basic Set operations are okay for now.
+                        if (urlsFound.size >= max_urls) break; // Check limit again
+
+                        if (!visited.has(link)) {
+                            const lowerLink = link.toLowerCase();
+                            // Filter out ignored keywords, extensions, and non-English paths
+                            if (
+                                ignoreKeywordRegexes.some(regex => regex.test(link)) ||
+                                ignoreExtensions.some(ext => lowerLink.endsWith(ext)) ||
+                                languagePathRegex.test(lowerLink)
+                            ) {
+                                safeLog?.('debug', `[${taskId}] Ignoring filtered link (keyword/extension/language): ${link}`);
+                                continue;
+                            }
+                            // Add if it looks like a doc link OR if we haven't reached max depth
+                            if (docKeywordRegexes.some(regex => regex.test(link)) || current.depth < crawl_depth) {
+                                visited.add(link); // Mark as visited *before* adding to queue/found
+                                urlsFound.add(link);
+                                // Add to the *next* level's queue
+                                nextQueue.push({ url: link, depth: current.depth + 1 });
+                            } else {
+                                safeLog?.('debug', `[${taskId}] Ignoring non-doc-like link at max depth: ${link}`);
+                            }
                         }
                     }
+                } catch (crawlError: any) {
+                    safeLog?.('warning', `[${taskId}] Failed to crawl ${current.url}: ${crawlError.message}`);
+                } finally {
+                    // Update progress roughly after each task finishes
+                    if (crawledCount % 10 === 0) { // Update less frequently
+                         updateTaskDetails(taskId, `Crawling: Processed ~${crawledCount} pages, Found ${urlsFound.size}/${max_urls}...`);
+                    }
                 }
-            } catch (crawlError: any) {
-                safeLog?.('warning', `[${taskId}] Failed to crawl ${current.url}: ${crawlError.message}`);
-            } finally {
-                await page.close();
-            }
+            }));
         }
-        return Array.from(urlsFound);
-    } finally {
-        // Release browser lock (handled by caller _crawlStage)
-        // PipelineState.releaseBrowserLock();
+
+        // Wait for all concurrent tasks for the current level to complete
+        await Promise.all(processingPromises);
+
+        // Prepare for the next level
+        currentQueue = nextQueue;
     }
+
+    updateTaskDetails(taskId, `Crawling finished. Found ${urlsFound.size} URLs.`);
+    return Array.from(urlsFound);
 }

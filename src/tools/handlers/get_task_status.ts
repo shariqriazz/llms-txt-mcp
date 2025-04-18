@@ -6,7 +6,8 @@ import { z } from 'zod';
 import { getTaskStatus, getAllTasks, TaskInfo } from '../../tasks.js';
 
 // --- Input Schema ---
-const TaskTypeEnum = z.enum(['crawl', 'synthesize-llms-full', 'embed', 'all']).optional().default('all').describe('Filter tasks by type.'); // Renamed 'process'
+// Update TaskTypeEnum with new stage names and main task type
+const TaskTypeEnum = z.enum(['get-llms-full', 'discovery', 'fetch', 'synthesize', 'embed', 'all']).optional().default('all').describe("Filter tasks by type (e.g., 'get-llms-full' for the main task, or specific stage names if sub-tasks were used - currently only 'get-llms-full' is relevant).");
 const DetailLevelEnum = z.enum(['simple', 'detailed']).optional().default('simple').describe('Level of detail to return.');
 
 const GetTaskStatusInputSchema = z.object({
@@ -86,10 +87,16 @@ export class GetTaskStatusHandler extends BaseHandler {
       const filteredTasks: { [key: string]: any } = {};
       let filterPrefix = '';
 
+      // Filtering is now primarily by the main task type 'get-llms-full'
+      // Specific stage filtering isn't directly supported as stages run within the main task.
+      // We keep the 'all' and 'get-llms-full' logic.
       switch (taskType) {
-          case 'crawl': filterPrefix = 'crawl-'; break;
-          case 'synthesize-llms-full': filterPrefix = 'synthesize-llms-full-'; break; // Use new type and prefix
-          case 'embed': filterPrefix = 'embed-'; break;
+          case 'get-llms-full': filterPrefix = 'get-llms-full-'; break;
+          // Remove specific stage cases as they are not separate tasks anymore
+          // case 'discovery': filterPrefix = 'discovery-'; break; // Example if stages were separate tasks
+          // case 'fetch': filterPrefix = 'fetch-'; break;
+          // case 'synthesize': filterPrefix = 'synthesize-'; break;
+          // case 'embed': filterPrefix = 'embed-'; break;
           case 'all':
           default: filterPrefix = ''; break;
       }
