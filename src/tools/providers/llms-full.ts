@@ -12,14 +12,15 @@ import {
   UtilExtractUrlsHandler,
   CleanupTaskStoreHandler,
   // New Task-Based Handlers
-  CrawlHandler,
-  SynthesizeLlmsFullHandler, // Renamed from ProcessHandler
-  EmbedHandler,
+  // CrawlHandler, // Replaced by ProcessQueryHandler
+  // SynthesizeLlmsFullHandler, // Replaced by ProcessQueryHandler
+  // EmbedHandler, // Replaced by ProcessQueryHandler
   CancelTaskHandler,
   GetTaskStatusHandler,
   GetTaskDetailsHandler,
   CheckProgressHandler, // Added new handler
   SynthesizeAnswerHandler,
+  ProcessQueryHandler, // Added new unified handler
 } from "../handlers/index.js";
 import { pipelineEmitter } from '../../pipeline_state.js'; // Import the event emitter
 
@@ -88,11 +89,8 @@ interface LlmsFullToolDefinition {
 }
 
 // Store handler instances for queue checking
-const handlerInstances: {
-    crawl?: CrawlHandler;
-    synthesizeLlmsFull?: SynthesizeLlmsFullHandler; // Renamed property
-    embed?: EmbedHandler;
-} = {};
+// No longer need to store individual stage handler instances for queue checking
+// const handlerInstances: { ... } = {};
 
 // Corrected llmsFullToolDefinitions object
 const llmsFullToolDefinitions: Record<string, LlmsFullToolDefinition> = {
@@ -147,43 +145,22 @@ const llmsFullToolDefinitions: Record<string, LlmsFullToolDefinition> = {
         }),
         handlerClass: UtilExtractUrlsHandler,
     },
-    // --- New Task-Based Tools ---
-    crawl: {
-        name: 'llms_full_crawl',
-        description: 'Starts the crawling and discovery stage for one or more topics/URLs. Accepts an array of requests, each returning a task ID.',
+    // --- Unified Processing Tool ---
+    process_query: {
+        name: 'llms_full_process_query',
+        description: 'Processes one or more queries/URLs sequentially through crawl, synthesize, and embed stages. Returns main task IDs for tracking.',
         parameters: z.object({
             requests: z.array(z.object({
-                topic_or_url: z.string().min(1).describe('Topic (e.g., "shadcn ui") or starting URL/path.'),
-                category: z.string().min(1).describe('Category to associate with the content.'),
-                crawl_depth: z.coerce.number().int().min(0).optional().default(5).describe('How many levels deeper than the discovered/provided root URL to crawl (default: 5).'),
-                max_urls: z.coerce.number().int().min(1).optional().default(1000).describe('Maximum number of URLs to fetch (default: 1000).'),
-            })).min(1).describe('An array containing one or more crawl requests.')
+                topic_or_url: z.string().min(1).describe('The topic keyword or specific URL to process.'),
+                category: z.string().min(1).describe('The category to assign to the processed content.'),
+                crawl_depth: z.coerce.number().int().min(0).optional().default(5).describe('Crawl depth (default: 5).'),
+                max_urls: z.coerce.number().int().min(1).optional().default(1000).describe('Max URLs to crawl (default: 1000).'),
+                max_llm_calls: z.coerce.number().int().min(1).optional().default(1000).describe('Max LLM calls for synthesis (default: 1000).'),
+            })).min(1).describe('An array of one or more queries/URLs to process sequentially.')
         }),
-        handlerClass: CrawlHandler,
+        handlerClass: ProcessQueryHandler,
     },
-    synthesize_llms_full: { // Renamed tool key
-        name: 'llms_full_synthesize_llms_full', // Renamed tool name
-        description: 'Starts the LLM synthesis stage using the output of completed crawl task(s). Accepts an array of crawl_task_ids or request objects. Returns task IDs.', // Updated description
-        parameters: z.object({ // Schema remains similar but refers to synthesis
-            requests: z.union([
-                z.array(z.string().min(1)).min(1),
-                z.array(z.object({
-                    crawl_task_id: z.string().min(1).describe('The task ID of the completed crawl stage.'),
-                    max_llm_calls: z.coerce.number().int().min(1).optional().default(1000).describe('Maximum LLM calls for synthesizing pages (default: 1000).'), // Updated description
-                    // Add specific LLM config overrides here later if needed
-                })).min(1)
-            ]).describe('An array of completed crawl_task_ids or an array of objects containing crawl_task_id and optional max_llm_calls.')
-        }),
-        handlerClass: SynthesizeLlmsFullHandler, // Use renamed handler class
-    },
-    embed: {
-        name: 'llms_full_embed',
-        description: 'Starts the embedding and indexing stage using the output of completed process task(s). Accepts an array of process_task_ids. Returns task IDs.',
-        parameters: z.object({
-            requests: z.array(z.string().min(1)).min(1).describe('An array of completed process_task_ids.')
-        }),
-        handlerClass: EmbedHandler,
-    },
+    // --- Task Management & Utility Tools ---
     cancel_task: {
         name: 'llms_full_cancel_task',
         description: 'Attempts to cancel a running/queued crawl, process, or embed task. Provide EITHER a specific `taskId` OR set `all` to true.',
@@ -292,22 +269,22 @@ function zodToJsonSchema(zodSchema: z.ZodObject<any>): any {
         // Instantiate the handler here
         const handlerInstance = new definition.handlerClass(apiClient, safeLog);
 
-        // Store instances of handlers that have queues
-        if (handlerInstance instanceof CrawlHandler) handlerInstances.crawl = handlerInstance;
-        if (handlerInstance instanceof SynthesizeLlmsFullHandler) handlerInstances.synthesizeLlmsFull = handlerInstance; // Use renamed class and property
-        if (handlerInstance instanceof EmbedHandler) handlerInstances.embed = handlerInstance;
+        // No longer need to store individual handler instances for queue checking
+        // if (handlerInstance instanceof CrawlHandler) ...
 
         // --- Attach General Pipeline Listener (only once) ---
-        if (!pipelineListenerAttached && (handlerInstances.crawl || handlerInstances.synthesizeLlmsFull || handlerInstances.embed)) { // Use renamed property
+        // Keep the listener structure in case other tools need it, but remove old checks
+        if (!pipelineListenerAttached) {
             pipelineEmitter.on('checkQueues', () => {
-                safeLog('debug', "[Pipeline Listener] Received 'checkQueues' event. Checking tool queues...");
-                // Call check methods if the handler instance exists
-                handlerInstances.crawl?._checkCrawlQueue();
-                handlerInstances.synthesizeLlmsFull?._checkSynthesizeLlmsFullQueue(); // Use renamed property and method
-                handlerInstances.embed?._checkEmbedQueue();
+                safeLog('debug', "[Pipeline Listener] Received 'checkQueues' event.");
+                // Remove calls to old queue checks:
+                // handlerInstances.crawl?._checkCrawlQueue();
+                // handlerInstances.synthesizeLlmsFull?._checkSynthesizeLlmsFullQueue();
+                // handlerInstances.embed?._checkEmbedQueue();
+                // Add checks for other potential queue-based handlers here if needed in the future
             });
             pipelineListenerAttached = true;
-            safeLog('info', 'Attached pipeline event listener for crawl, process, and embed tool queues.');
+            safeLog('info', 'Attached pipeline event listener.'); // Simplified message
         }
         // --- End Listener Attachment ---
 
