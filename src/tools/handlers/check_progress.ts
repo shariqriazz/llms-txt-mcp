@@ -9,31 +9,31 @@ interface ProgressSummary {
     queued: number;
     failed: number;
     cancelled: number;
-    runningProgressCurrent: number;
-    runningProgressTotal: number;
-    // Add stage counts specifically for process-query
-    runningCrawl?: number;
-    runningSynthesize?: number;
-    runningEmbed?: number;
+    // Store details for the single running get-llms-full task, if any
+    runningStage?: 'Crawl' | 'Synthesize' | 'Embed' | 'Unknown';
+    runningTaskProgressCurrent?: number;
+    runningTaskProgressTotal?: number;
 }
 
 export class CheckProgressHandler extends BaseHandler {
     async handle(args: any): Promise<McpToolResponse> {
         const allTasks = getAllTasks();
         const summary: Record<string, ProgressSummary> = {
-            crawl: { total: 0, completed: 0, running: 0, queued: 0, failed: 0, cancelled: 0, runningProgressCurrent: 0, runningProgressTotal: 0 },
-            'synthesize-llms-full': { total: 0, completed: 0, running: 0, queued: 0, failed: 0, cancelled: 0, runningProgressCurrent: 0, runningProgressTotal: 0 }, // Renamed from process
-            embed: { total: 0, completed: 0, running: 0, queued: 0, failed: 0, cancelled: 0, runningProgressCurrent: 0, runningProgressTotal: 0 },
-            'process-query': { total: 0, completed: 0, running: 0, queued: 0, failed: 0, cancelled: 0, runningProgressCurrent: 0, runningProgressTotal: 0, runningCrawl: 0, runningSynthesize: 0, runningEmbed: 0 }, // Added stage counts
-            unknown: { total: 0, completed: 0, running: 0, queued: 0, failed: 0, cancelled: 0, runningProgressCurrent: 0, runningProgressTotal: 0 }
+            // Only initialize summaries for task types we expect to report
+            'get-llms-full': { total: 0, completed: 0, running: 0, queued: 0, failed: 0, cancelled: 0 },
+            unknown: { total: 0, completed: 0, running: 0, queued: 0, failed: 0, cancelled: 0 } // Catch-all
         };
 
         for (const [taskId, taskInfo] of allTasks.entries()) {
-            let taskType = 'unknown';
-            if (taskId.startsWith('crawl-')) taskType = 'crawl';
-            else if (taskId.startsWith('synthesize-llms-full-')) taskType = 'synthesize-llms-full'; // Use new prefix and key
-            else if (taskId.startsWith('embed-')) taskType = 'embed';
-            else if (taskId.startsWith('process-query-')) taskType = 'process-query'; // Added check for new prefix
+            let taskType = 'unknown'; // Default to unknown
+            if (taskId.startsWith('get-llms-full-')) {
+                taskType = 'get-llms-full'; // Only specifically identify the unified task type
+            }
+
+            // Ensure the summary object exists for the determined type (handles potential future types)
+            if (!summary[taskType]) {
+                summary[taskType] = { total: 0, completed: 0, running: 0, queued: 0, failed: 0, cancelled: 0 };
+            }
 
             const typeSummary = summary[taskType];
             typeSummary.total++;
@@ -42,19 +42,19 @@ export class CheckProgressHandler extends BaseHandler {
                 case 'completed': typeSummary.completed++; break;
                 case 'running':
                     typeSummary.running++;
-                    typeSummary.runningProgressCurrent += taskInfo.progressCurrent ?? 0;
-                    typeSummary.runningProgressTotal += taskInfo.progressTotal ?? 0;
-                    // Extract stage for process-query tasks based on common detail patterns
-                    if (taskType === 'process-query') {
+                    // For get-llms-full, store the single running task's stage and progress
+                    if (taskType === 'get-llms-full') {
+                        typeSummary.runningTaskProgressCurrent = taskInfo.progressCurrent;
+                        typeSummary.runningTaskProgressTotal = taskInfo.progressTotal;
+                        typeSummary.runningStage = 'Unknown'; // Default
                         // Check for patterns indicating the stage
                         if (taskInfo.details.includes('Crawling') || taskInfo.details.includes('Crawl Stage:')) {
-                            typeSummary.runningCrawl = (typeSummary.runningCrawl ?? 0) + 1;
+                            typeSummary.runningStage = 'Crawl';
                         } else if (taskInfo.details.includes('LLM Stage:') || taskInfo.details.includes('Synthesize Stage:')) {
-                            typeSummary.runningSynthesize = (typeSummary.runningSynthesize ?? 0) + 1;
+                            typeSummary.runningStage = 'Synthesize';
                         } else if (taskInfo.details.includes('Embedding') || taskInfo.details.includes('Embed Stage:')) {
-                            typeSummary.runningEmbed = (typeSummary.runningEmbed ?? 0) + 1;
+                            typeSummary.runningStage = 'Embed';
                         }
-                        // Note: If details don't match any pattern, it won't be counted in a specific stage.
                     }
                     break;
                 case 'queued': typeSummary.queued++; break;
@@ -65,28 +65,34 @@ export class CheckProgressHandler extends BaseHandler {
 
         let report = "";
         for (const type in summary) {
+            // Skip empty categories unless it's 'unknown' and has tasks
+            if (summary[type].total === 0 && type !== 'unknown') continue;
             if (type === 'unknown' && summary[type].total === 0) continue;
+
 
             const s = summary[type];
             let runningText = `- Running: ${s.running}`;
             if (s.running > 0) {
-                if (type === 'process-query') {
-                    const stageDetails: string[] = [];
-                    if (s.runningCrawl ?? 0 > 0) stageDetails.push(`Crawl: ${s.runningCrawl}`);
-                    if (s.runningSynthesize ?? 0 > 0) stageDetails.push(`Synthesize: ${s.runningSynthesize}`);
-                    if (s.runningEmbed ?? 0 > 0) stageDetails.push(`Embed: ${s.runningEmbed}`);
-                    if (stageDetails.length > 0) runningText += ` (${stageDetails.join(', ')})`;
+                // Add stage and progress details specifically for get-llms-full
+                if (type === 'get-llms-full' && s.runningStage) {
+                    let stageDetail = s.runningStage;
+                    if (s.runningTaskProgressCurrent !== undefined && s.runningTaskProgressTotal !== undefined && s.runningTaskProgressTotal > 0) {
+                        stageDetail += ` [${s.runningTaskProgressCurrent}/${s.runningTaskProgressTotal}]`;
+                    }
+                    runningText += ` (${stageDetail})`;
                 }
-                // Add overall progress if available (might be less useful if stages are shown)
-                // if (s.runningProgressTotal > 0) {
-                //     runningText += ` (Overall Progress: ${s.runningProgressCurrent}/${s.runningProgressTotal})`;
+                // Add a generic progress indicator for 'unknown' tasks if applicable (optional)
+                // else if (type === 'unknown' && s.runningProgressTotal > 0) {
+                //     runningText += ` (Progress: ${s.runningProgressCurrent}/${s.runningProgressTotal})`;
                 // }
             }
 
-            report += `${type.charAt(0).toUpperCase() + type.slice(1)} Tasks:\n`;
+            // Format type name nicely (e.g., "Get-llms-full")
+            const formattedTypeName = type.split('-').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join('-');
+            report += `${formattedTypeName} Tasks:\n`;
             report += `- Total: ${s.total}\n`;
             report += `- Completed: ${s.completed}\n`;
-            report += `${runningText}\n`; // Use the constructed running text
+            report += `${runningText}\n`;
             report += `- Queued: ${s.queued}\n`;
             if (s.failed > 0) report += `- Failed: ${s.failed}\n`;
             if (s.cancelled > 0) report += `- Cancelled: ${s.cancelled}\n`;

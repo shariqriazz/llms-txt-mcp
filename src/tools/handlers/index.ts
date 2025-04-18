@@ -21,4 +21,5 @@ export * from './get_task_status.js'; // New general task status handler
 export * from './get_task_details.js';// New general task details handler
 export * from './check_progress.js'; // New progress summary handler
 export * from './synthesize_answer_handler.js'; // New synthesis tool handler
-export * from './process_query_handler.js'; // New unified handler
+export * from './get_llms_full_handler.js'; // Renamed unified handler
+export * from './restart_llms_full_task_handler.js';

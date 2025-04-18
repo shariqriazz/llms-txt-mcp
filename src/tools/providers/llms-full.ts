@@ -20,7 +20,8 @@ import {
   GetTaskDetailsHandler,
   CheckProgressHandler, // Added new handler
   SynthesizeAnswerHandler,
-  ProcessQueryHandler, // Added new unified handler
+  GetLlmsFullHandler, // Renamed unified handler
+  RestartLlmsFullTaskHandler, // Added restart handler
 } from "../handlers/index.js";
 import { pipelineEmitter } from '../../pipeline_state.js'; // Import the event emitter
 
@@ -146,36 +147,38 @@ const llmsFullToolDefinitions: Record<string, LlmsFullToolDefinition> = {
         handlerClass: UtilExtractUrlsHandler,
     },
     // --- Unified Processing Tool ---
-    process_query: {
-        name: 'llms_full_process_query',
-        description: 'Processes one or more queries/URLs sequentially through crawl, synthesize, and embed stages. Returns main task IDs for tracking.',
+    get_llms_full: { // Renamed tool key
+        name: 'get_llms_full', // Renamed tool name
+        description: 'Processes one or more queries/URLs sequentially through crawl, synthesize, and embed stages (get_llms_full). Returns main task IDs for tracking.', // Updated description
         parameters: z.object({
             requests: z.array(z.object({
-                topic_or_url: z.string().min(1).describe('The topic keyword or specific URL to process.'),
-                category: z.string().min(1).describe('The category to assign to the processed content.'),
-                crawl_depth: z.coerce.number().int().min(0).optional().default(5).describe('Crawl depth (default: 5).'),
-                max_urls: z.coerce.number().int().min(1).optional().default(1000).describe('Max URLs to crawl (default: 1000).'),
-                max_llm_calls: z.coerce.number().int().min(1).optional().default(1000).describe('Max LLM calls for synthesis (default: 1000).'),
-            })).min(1).describe('An array of one or more queries/URLs to process sequentially.')
+                topic_or_url: z.string().min(1).optional().describe('The topic keyword or specific URL to process (required unless providing a file path).'), // Made optional
+                category: z.string().min(1).describe('The category to assign to the processed content (required).'),
+                crawl_depth: z.coerce.number().int().min(0).optional().default(5).describe('Crawl depth (default: 5). Only used if crawl stage runs.'),
+                max_urls: z.coerce.number().int().min(1).optional().default(1000).describe('Max URLs to crawl (default: 1000). Only used if crawl stage runs.'),
+                max_llm_calls: z.coerce.number().int().min(1).optional().default(1000).describe('Max LLM calls for synthesis (default: 1000). Only used if synthesize stage runs.'),
+                crawl_urls_file_path: z.string().optional().describe('Optional path to a local JSON file containing an array of URLs. Skips crawl stage.'),
+                synthesized_content_file_path: z.string().optional().describe('Optional path to a local text/markdown file containing pre-synthesized content. Skips crawl and synthesize stages.'),
+            })).min(1).describe('An array of one or more queries/URLs/files to process sequentially.')
         }),
-        handlerClass: ProcessQueryHandler,
+        handlerClass: GetLlmsFullHandler, // Use renamed handler class
     },
     // --- Task Management & Utility Tools ---
     cancel_task: {
         name: 'llms_full_cancel_task',
-        description: 'Attempts to cancel a running/queued crawl, process, or embed task. Provide EITHER a specific `taskId` OR set `all` to true.',
+        description: 'Attempts to cancel a running/queued task (e.g., get_llms_full, crawl, synthesize, embed). Provide EITHER a specific `taskId` OR set `all` to true.', // Updated description
         parameters: z.object({
             taskId: z.string().min(1).optional().describe('Optional: The unique ID of the task to cancel.'),
-            all: z.boolean().optional().default(false).describe('Optional: Set true to cancel ALL active crawl/process/embed tasks instead of using taskId (default: false).'),
+            all: z.boolean().optional().default(false).describe('Optional: Set true to cancel ALL active tasks (get_llms_full, crawl, synthesize, embed) instead of using taskId (default: false).'), // Updated description
         }),
         handlerClass: CancelTaskHandler,
     },
     get_task_status: {
         name: 'llms_full_get_task_status',
-        description: 'Get the status of a specific task (crawl, process, embed), or all tasks of a specific type, or all tasks. Control output detail with detail_level.',
+        description: 'Get the status of a specific task (e.g., get_llms_full, crawl, synthesize, embed), or all tasks of a specific type, or all tasks. Control output detail with detail_level.', // Updated description
         parameters: z.object({
             taskId: z.string().min(1).optional().describe('Optional: The unique ID of the task to check. If omitted, returns multiple tasks based on taskType.'),
-            taskType: z.enum(['crawl', 'process', 'embed', 'all']).optional().default('all').describe('Optional: Filter tasks by type when taskId is omitted (default: all).'),
+            taskType: z.enum(['get-llms-full', 'crawl', 'synthesize-llms-full', 'embed', 'all']).optional().default('all').describe('Optional: Filter tasks by type (e.g., get-llms-full) when taskId is omitted (default: all).'), // Added new type, updated old process->synthesize
             detail_level: z.enum(['simple', 'detailed']).optional().default('simple').describe('Optional: "simple" (default) hides large fields like discoveredUrls, "detailed" includes everything.'),
         }),
         handlerClass: GetTaskStatusHandler,
@@ -188,17 +191,28 @@ const llmsFullToolDefinitions: Record<string, LlmsFullToolDefinition> = {
         }),
         handlerClass: GetTaskDetailsHandler,
     },
+    restart_task: { // New tool for restarting
+        name: 'llms_full_restart_task',
+        description: 'Prepares a request to restart a failed get-llms-full task from a specific stage (crawl, synthesize, or embed) using previously generated data if available.',
+        parameters: z.object({
+            failed_task_id: z.string().min(1).describe('The ID of the failed get-llms-full task to restart.'),
+            restart_stage: z.enum(['crawl', 'synthesize', 'embed']).describe("The stage from which to restart ('crawl', 'synthesize', or 'embed')."),
+        }),
+        handlerClass: RestartLlmsFullTaskHandler,
+    },
     // --- Other Tools ---
     cleanup_task_store: {
         name: 'llms_full_cleanup_task_store',
-        description: 'Removes completed, failed, and cancelled tasks from the internal task list.',
-        parameters: z.object({}),
+        description: 'Removes tasks from the internal task list. By default removes completed, failed, and cancelled tasks. Optionally removes specific tasks by ID.',
+        parameters: z.object({
+            taskIds: z.array(z.string().min(1)).optional().describe('Optional array of specific task IDs to remove. If omitted, all finished tasks are removed.'),
+        }),
         handlerClass: CleanupTaskStoreHandler,
     },
     // --- New Progress Summary Tool ---
     check_progress: {
         name: 'llms_full_check_progress',
-        description: 'Provides a summary report of crawl, process, and embed tasks, categorized by status (completed, running, queued, failed, cancelled) and showing progress for running tasks.',
+        description: 'Provides a summary report of tasks (e.g., get_llms_full, crawl, synthesize, embed), categorized by status (completed, running, queued, failed, cancelled) and showing progress/stage for running tasks.', // Updated description
         parameters: z.object({}),
         handlerClass: CheckProgressHandler,
     },

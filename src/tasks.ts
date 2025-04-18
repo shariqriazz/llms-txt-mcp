@@ -170,20 +170,41 @@ export function getAllTasks(prefix?: string): Map<string, TaskInfo> {
 }
 
 /**
- * Cleans up completed, failed, or cancelled tasks from the store.
- * Should be called periodically if memory usage becomes a concern.
+ * Cleans up tasks from the store.
+ * If taskIds are provided, only those specific tasks are removed, regardless of status.
+ * If taskIds are not provided, removes all completed, failed, or cancelled tasks.
+ * @param taskIds Optional array of specific task IDs to remove.
  */
-export function cleanupTaskStore(): void {
+export function cleanupTaskStore(taskIds?: string[]): void {
     let cleanedCount = 0;
-    for (const [taskId, taskInfo] of taskStore.entries()) {
-        // Check the status property of the TaskInfo object - clean up non-running AND non-queued tasks
-        if (taskInfo.status !== 'running' && taskInfo.status !== 'queued') {
-            taskStore.delete(taskId);
-            cleanedCount++;
+    let changed = false;
+
+    if (taskIds && taskIds.length > 0) {
+        // Remove specific tasks by ID
+        for (const idToRemove of taskIds) {
+            if (taskStore.delete(idToRemove)) {
+                cleanedCount++;
+                changed = true;
+            }
+        }
+        if (cleanedCount > 0) {
+            console.error(`[INFO] Removed ${cleanedCount} specified tasks from store.`);
+        }
+    } else {
+        // Default behavior: remove finished tasks
+        for (const [taskId, taskInfo] of taskStore.entries()) {
+            if (taskInfo.status !== 'running' && taskInfo.status !== 'queued') {
+                taskStore.delete(taskId);
+                cleanedCount++;
+                changed = true;
+            }
+        }
+        if (cleanedCount > 0) {
+            console.error(`[INFO] Cleaned up ${cleanedCount} finished tasks from store.`);
         }
     }
-    if (cleanedCount > 0) {
-        console.error(`[INFO] Cleaned up ${cleanedCount} finished tasks from store.`);
+
+    if (changed) {
         saveTaskStoreToFile();
     }
 }

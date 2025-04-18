@@ -1,19 +1,20 @@
 # llms-full MCP Server
 
-This Model Context Protocol (MCP) server provides tools for managing and searching a local RAG documentation system (using Qdrant and various embedding providers) and leverages Tavily AI for web search and discovery. It features a multi-stage pipeline for processing documentation sources.
+This Model Context Protocol (MCP) server provides tools for managing and searching a local RAG documentation system (using Qdrant and various embedding providers) and leverages Tavily AI for web search and discovery. It features a unified, sequential pipeline for processing documentation sources.
 
 ## Features
 
 *   **API Integration:** Access tools powered by Tavily AI and llms-full through one server.
 *   **Web Search:** Perform general web search via Tavily (`tavily_search`, `tavily_extract`).
 *   **Documentation RAG:** Manage and query local documentation indexed in a vector store (Qdrant + OpenAI/Ollama/Google). Includes tools for listing sources/categories, removing sources, resetting the store, and performing vector search (`llms_full_vector_store_*`).
-*   **Task-Based Pipeline:** A multi-stage pipeline for ingesting documentation:
-    *   **Crawl (`llms_full_crawl`):** Discovers URLs for a topic (using Tavily) or starts from a given URL/path. Crawls linked pages based on depth/limits.
-    *   **Synthesize-LLMS-Full (`llms_full_synthesize_llms_full`):** Takes completed crawl tasks, extracts content from discovered URLs, uses a configured LLM (Gemini, Ollama, or OpenRouter) to generate structured markdown summaries, and saves intermediate files. (Formerly 'process')
-    *   **Embed (`llms_full_embed`):** Takes completed synthesize-llms-full tasks, reads the generated markdown, chunks/embeds the content using the configured embedding provider, and indexes it into the Qdrant vector store.
-*   **Task Management:** Tools to monitor and manage pipeline tasks (`llms_full_get_task_status`, `llms_full_get_task_details`, `llms_full_cancel_task`, `llms_full_check_progress`, `llms_full_cleanup_task_store`).
-*   **Concurrency Control:** Uses locks and queues to manage concurrent execution of pipeline stages and shared resources (like the browser).
-*   **Robust & Configurable:** Includes API key/config management via environment variables and clear logging. Schema descriptions have been improved for better tool clarity.
+*   **Unified Sequential Pipeline (`get_llms_full`):** Processes documentation sources (topics, URLs, or local files) through a sequential Crawl -> Synthesize -> Embed pipeline.
+    *   **Crawl:** Discovers URLs for a topic (using Tavily) or starts from a given URL/path. Crawls linked pages based on depth/limits. Saves discovered URLs to a file. (Can be skipped by providing `crawl_urls_file_path`).
+    *   **Synthesize:** Takes discovered URLs, extracts content, uses a configured LLM (Gemini, Ollama, or OpenRouter) to generate structured markdown summaries, and saves intermediate files. (Can be skipped by providing `synthesized_content_file_path`).
+    *   **Embed:** Takes the synthesized markdown, chunks/embeds the content using the configured embedding provider, and indexes it into the Qdrant vector store.
+*   **Task Management:** Tools to monitor and manage pipeline tasks (`llms_full_get_task_status`, `llms_full_get_task_details`, `llms_full_cancel_task`, `llms_full_check_progress`, `llms_full_cleanup_task_store`, `llms_full_restart_task`).
+*   **Task Restart:** Restart failed `get_llms_full` tasks from a specific stage (`crawl`, `synthesize`, `embed`) using previously generated intermediate data (`llms_full_restart_task`).
+*   **Concurrency Control:** Uses locks to manage shared resources (like the browser and embedding process). Sequential processing per query avoids stage conflicts.
+*   **Robust & Configurable:** Includes API key/config management via environment variables and clear logging.
 
 ## Available Tools
 
@@ -21,7 +22,7 @@ This server provides the following tools:
 
 **Tavily AI Tools:** (Requires `TAVILY_API_KEY`)
 
-*   `tavily_search`: AI-powered web search with filtering options. Used by `llms_full_crawl` for topic discovery.
+*   `tavily_search`: AI-powered web search with filtering options. Used internally by `get_llms_full` for topic discovery.
 *   `tavily_extract`: Extract content from specified URLs.
 
 **llms-full Tools:** (Requires Qdrant & Embedding configuration)
@@ -33,20 +34,19 @@ This server provides the following tools:
     *   `llms_full_vector_store_reset`: Delete and recreate the documentation vector store collection. **Warning: This permanently removes all indexed data.**
     *   `llms_full_vector_store_search`: Search the vector store using natural language. Optionally filter by category (string or array), source URL/path pattern (`*` wildcard), and minimum score threshold (default 0.55).
 
-*   **Pipeline Tools:**
-    *   `llms_full_crawl`: Starts the crawling/discovery stage for one or more topics/URLs. Accepts an array of requests (topic/URL, category, crawl_depth, max_urls). Returns task IDs.
-    *   `llms_full_synthesize_llms_full`: Starts the LLM synthesis stage using the output of completed crawl task(s). Accepts an array of crawl_task_ids or objects specifying `crawl_task_id` and `max_llm_calls`. Returns task IDs. (Formerly `llms_full_process`)
-    *   `llms_full_embed`: Starts the embedding/indexing stage using the output of completed synthesize-llms-full task(s). Accepts an array of synthesize_llms_full_task_ids. Returns task IDs.
+*   **Unified Pipeline Tool:**
+    *   `get_llms_full`: Processes one or more queries/URLs/files sequentially through crawl, synthesize, and embed stages. Accepts an array of requests, each specifying `category` and one of `topic_or_url`, `crawl_urls_file_path` (skips crawl), or `synthesized_content_file_path` (skips crawl & synthesize). Returns main task IDs for tracking.
 
 *   **Task Management Tools:**
-    *   `llms_full_get_task_status`: Get the status of a specific task (crawl, synthesize-llms-full, embed) using `taskId`, or list tasks filtered by `taskType` ('crawl', 'synthesize-llms-full', 'embed', 'all'). Control output detail with `detail_level` ('simple', 'detailed'). Includes ETA estimation for running tasks with progress.
-    *   `llms_full_get_task_details`: Get the detailed output/result string for a specific task ID (e.g., path to discovered URLs file, path to synthesized content file, error messages).
-    *   `llms_full_cancel_task`: Attempts to cancel running/queued task(s). Provide EITHER a specific `taskId` OR set `all: true` to cancel all active crawl/synthesize-llms-full/embed tasks.
-    *   `llms_full_check_progress`: Provides a summary report of crawl, synthesize-llms-full, and embed tasks, categorized by status (completed, running, queued, failed, cancelled) and showing aggregated progress (X/Y) for running tasks.
-    *   `llms_full_cleanup_task_store`: Removes completed, failed, and cancelled tasks from the internal task list.
+    *   `llms_full_get_task_status`: Get the status of a specific task (e.g., `get-llms-full`) using `taskId`, or list tasks filtered by `taskType` ('get-llms-full', 'all'). Control output detail with `detail_level` ('simple', 'detailed'). Includes ETA estimation for running tasks with progress.
+    *   `llms_full_get_task_details`: Get the detailed output/result string for a specific task ID (e.g., paths to intermediate files, error messages, final status).
+    *   `llms_full_cancel_task`: Attempts to cancel running/queued task(s). Provide EITHER a specific `taskId` OR set `all: true` to cancel all active `get-llms-full` tasks.
+    *   `llms_full_check_progress`: Provides a summary report of `get-llms-full` tasks, categorized by status (completed, running, queued, failed, cancelled) and showing the current stage (Crawl, Synthesize, Embed) and progress [X/Y] for the running task.
+    *   `llms_full_cleanup_task_store`: Removes tasks from the internal task list. By default removes completed, failed, and cancelled tasks. Optionally removes specific tasks by ID using the `taskIds` array parameter.
+    *   `llms_full_restart_task`: Prepares a request to restart a failed `get-llms-full` task from a specific stage (`crawl`, `synthesize`, or `embed`) using previously generated data if available. Takes `failed_task_id` and `restart_stage`. Returns the parameters needed to call `get_llms_full` for the restart.
 
 *   **Utilities:**
-    *   `llms_full_util_extract_urls`: Utility to extract same-origin URLs from a webpage. Can find shallower links (controlled by `maxDepth`) and optionally add results to a processing queue file (`add_to_queue: true`).
+    *   `llms_full_util_extract_urls`: Utility to extract same-origin URLs from a webpage. Can find shallower links (controlled by `maxDepth`).
     *   `llms_full_synthesize_answer_from_docs`: Searches the vector store for context related to a query and uses an LLM to synthesize an answer based on the results.
 
 *(Refer to the input schema definitions within the source code or use an MCP inspector tool for detailed parameters for each tool.)*
@@ -104,7 +104,7 @@ npx -y llms-full-mcp-server
 Set these variables directly in your shell, using a `.env` file in the server's directory (if running manually), or within the MCP client's configuration interface. **Only set keys for services you intend to use.**
 
 *   **Tavily (for Web Search & Crawl Discovery):**
-    *   `TAVILY_API_KEY`: Your Tavily API key. **Required** for `tavily_search`, `tavily_extract`, and topic discovery in `llms_full_crawl`.
+    *   `TAVILY_API_KEY`: Your Tavily API key. **Required** for `tavily_search`, `tavily_extract`, and topic discovery in `get_llms_full`.
 
 *   **LLM (for Pipeline Synthesis Stage):**
     *   `PIPELINE_LLM_PROVIDER`: (Optional) Choose `gemini` (default), `ollama`, `openrouter`, or `chutes`.
@@ -179,15 +179,17 @@ Add/modify the entry in your client's MCP configuration file:
 ## Usage Examples
 
 *   "Use `tavily_search` to find recent news about vector databases."
-*   "Start crawling documentation for 'shadcn ui' under category 'shadcn' using `llms_full_crawl`." (Note the task ID)
-*   "Start synthesizing the completed crawl task 'crawl-xxxxxxxx-...' using `llms_full_synthesize_llms_full`." (Note the task ID)
-*   "Start embedding the completed synthesis task 'synthesize-llms-full-xxxxxxxx-...' using `llms_full_embed`." (Note the task ID)
+*   "Process documentation for 'shadcn ui' under category 'shadcn' using `get_llms_full`." (Note the task ID)
+*   "Process documentation using a pre-existing URL list file `path/to/urls.json` for category 'react' using `get_llms_full` with the `crawl_urls_file_path` parameter."
+*   "Process documentation using a pre-synthesized content file `path/to/content.md` for category 'nextjs' using `get_llms_full` with the `synthesized_content_file_path` parameter."
 *   "Check the overall progress of tasks using `llms_full_check_progress`."
-*   "Get the status for task 'synthesize-llms-full-xxxxxxxx-...' using `llms_full_get_task_status`."
-*   "Get the detailed results file path for completed task 'synthesize-llms-full-xxxxxxxx-...' using `llms_full_get_task_details`."
-*   "Cancel task 'crawl-xxxxxxxx-...' using `llms_full_cancel_task`."
-*   "Cancel all active pipeline tasks using `llms_full_cancel_task` with `all: true`."
+*   "Get the status for task 'get-llms-full-xxxxxxxx-...' using `llms_full_get_task_status`."
+*   "Get the detailed results file path for completed task 'get-llms-full-xxxxxxxx-...' using `llms_full_get_task_details`."
+*   "Cancel task 'get-llms-full-xxxxxxxx-...' using `llms_full_cancel_task`."
+*   "Cancel all active `get-llms-full` tasks using `llms_full_cancel_task` with `all: true`."
 *   "Clean up finished tasks from the store using `llms_full_cleanup_task_store`."
+*   "Remove specific tasks 'get-llms-full-xxxx', 'get-llms-full-yyyy' using `llms_full_cleanup_task_store` with the `taskIds` parameter."
+*   "If task 'get-llms-full-zzzz' failed during synthesis, prepare a restart request using `llms_full_restart_task` with `failed_task_id: 'get-llms-full-zzzz'` and `restart_stage: 'synthesize'`. Then use the output to call `get_llms_full`."
 *   "List documentation categories using `llms_full_vector_store_list_categories`."
 *   "Search the documentation for 'state management' in the 'react' category using `llms_full_vector_store_search`."
 *   "Ask 'how to integrate shadcn buttons with react-hook-form' using `llms_full_synthesize_answer_from_docs`."
