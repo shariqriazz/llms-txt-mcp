@@ -18,3 +18,5 @@ build/
 
 # Intermediate output directories
 generated_llms_guides/
+
+*.zip
