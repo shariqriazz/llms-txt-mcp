@@ -16,7 +16,10 @@ This Model Context Protocol (MCP) server provides tools for managing and searchi
    *   **Stage Control:** Optionally skip initial stages (`discovery_output_file_path`, `fetch_output_dir_path`, `synthesized_content_file_path`) or stop after a specific stage (`stop_after_stage: 'discovery' | 'fetch' | 'synthesize'`).
 *   **Task Management:** Tools to monitor and manage pipeline tasks (`llms_full_get_task_status`, `llms_full_get_task_details`, `llms_full_cancel_task`, `llms_full_check_progress`, `llms_full_cleanup_task_store`, `llms_full_restart_task`).
 *   **Task Restart:** Restart failed `get_llms_full` tasks from a specific stage (`discovery`, `fetch`, `synthesize`, `embed`) using previously generated intermediate data (`llms_full_restart_task`).
-*   **Concurrency Control:** Uses `p-limit` and configurable limits (`BROWSER_POOL_SIZE`, `LLM_CONCURRENCY`) for concurrent web operations (Discovery/Fetch) and LLM calls (Synthesize). Uses locks for the embedding process. Sequential processing *per query request* avoids stage conflicts for a single request.
+*   **Concurrency Control:** Implements a scheduler to manage concurrent task execution. Allows browser-dependent stages (Discovery, Fetch) of one task to potentially run concurrently with CPU/API-bound stages (Synthesize, Embed) of another task, respecting resource limits and locks:
+    *   **Browser Activity:** Only one Discovery or Fetch stage runs at a time across all tasks (uses `BrowserActivityLock`). Internal operations within these stages (page fetching) use `p-limit` based on `BROWSER_POOL_SIZE`.
+    *   **Synthesize:** Only one Synthesize stage runs at a time across all tasks (uses `SynthesizeLock`). Internal LLM calls within this stage use `p-limit` based on `LLM_CONCURRENCY`.
+    *   **Embed:** Only one Embed stage runs at a time across all tasks (uses `EmbeddingLock`). Internal Qdrant upserts use batching (`QDRANT_BATCH_SIZE`).
 *   **Robust & Configurable:** Includes API key/config management via environment variables and clear logging. Intermediate files are stored in the `./data/` directory.
 
 ## Available Tools

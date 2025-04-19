@@ -7,7 +7,18 @@ const TASK_STORE_DIR = path.join(process.cwd(), 'data'); // Store in data direct
 const TASK_STORE_FILE = path.join(TASK_STORE_DIR, 'task_store.json'); // Use .json extension
 
 // Define the structure for storing task information
-export type TaskStatusValue = 'queued' | 'running' | 'cancelled' | 'completed' | 'failed'; // Added 'queued'
+export type TaskStatusValue = 'queued' | 'running' | 'cancelled' | 'completed' | 'failed';
+
+// Define possible stage names/states (used internally and for reporting)
+export type TaskStageValue =
+    | 'QUEUED' // Initial state before scheduler picks up
+    | 'Discovery'
+    | 'Fetch'
+    | 'Synthesize'
+    | 'Embed'
+    | 'Cleanup'
+    | undefined; // Cleared on final status
+
 
 export interface TaskInfo {
   status: TaskStatusValue;
@@ -16,12 +27,11 @@ export interface TaskInfo {
   endTime: number | null; // Store as timestamp or null
   progressCurrent?: number; // Optional: Current progress unit (e.g., 7)
   progressTotal?: number;   // Optional: Total progress units (e.g., 10)
-  currentStage?: string; // Optional: Current stage name (e.g., 'Discovery', 'Fetch')
+  currentStage?: TaskStageValue; // Optional: Current stage name
+  description?: string; // Optional: User-friendly description of the task input
 }
 
 // Updated in-memory store for detailed task information
-// Key: taskId (string)
-// Value: TaskInfo object
 let taskStore = new Map<string, TaskInfo>();
 
 // --- Persistence Functions ---
@@ -62,16 +72,19 @@ async function loadTaskStoreFromFile(): Promise<void> {
 
 /**
  * Registers a new task, assigns a unique ID, initializes its info, and returns the ID.
+ * @param prefix Prefix for the task ID.
+ * @param description Optional user-friendly description for the task.
  */
-export function registerTask(prefix: string = 'task'): string {
+export function registerTask(prefix: string = 'task', description?: string): string {
   const taskId = `${prefix}-${uuidv4()}`;
   const now = Date.now();
   const initialInfo: TaskInfo = {
-    status: 'running',
+    status: 'queued', // Initialize as queued
     details: 'Initializing...',
     startTime: now,
     endTime: null,
-    currentStage: 'queued', // Initialize stage as 'queued'
+    currentStage: 'QUEUED', // Initialize stage as 'QUEUED' (consistent casing)
+    description: description || prefix, // Store the description
   };
   taskStore.set(taskId, initialInfo);
   console.error(`[INFO] Registered new task: ${taskId}`);
@@ -81,24 +94,19 @@ export function registerTask(prefix: string = 'task'): string {
 
 /**
  * Updates the main status of a task and sets the end time if it's a final status.
+ * Also clears the currentStage for final statuses.
  */
 export function setTaskStatus(taskId: string, status: TaskStatusValue): void {
   const taskInfo = taskStore.get(taskId);
   if (taskInfo) {
     taskInfo.status = status;
-    // Set end time only if it's a final state and not already set
     const isFinalState = status === 'completed' || status === 'failed' || status === 'cancelled';
     if (isFinalState && taskInfo.endTime === null) {
       taskInfo.endTime = Date.now();
-      // Never automatically overwrite details for final states.
-      // Assume the handler has already set the appropriate final details (JSON result or error message).
+      taskInfo.currentStage = undefined; // Clear stage on final state
     } else if (!isFinalState) {
-        // Ensure endTime is null if transitioning back to a non-final state (e.g., queued -> running)
         taskInfo.endTime = null;
         // Don't clear currentStage when going back to running/queued
-    } else if (isFinalState) {
-        // Clear currentStage when task reaches a final state
-        taskInfo.currentStage = undefined;
     }
     console.error(`[INFO] Updated task ${taskId} status to: ${status}`);
     saveTaskStoreToFile();
@@ -108,55 +116,48 @@ export function setTaskStatus(taskId: string, status: TaskStatusValue): void {
 }
 
 /**
- * Updates only the details string for a running task.
+ * Updates only the details string for a task.
  * Also parses the details string for progress information (e.g., "X/Y") and updates progress fields.
  */
 export function updateTaskDetails(taskId: string, details: string): void {
     const taskInfo = taskStore.get(taskId);
-    if (taskInfo && taskInfo.status === 'running') {
+    if (taskInfo) { // Update details regardless of status, but only parse progress if running
         taskInfo.details = details;
 
-        // Regex to find patterns like "Stage: Processing X/Y..." or "Processing X/Y"
-        const progressMatch = details.match(/(\d+)\/(\d+)/);
-
-        if (progressMatch && progressMatch.length === 3) {
-            const current = parseInt(progressMatch[1], 10);
-            const total = parseInt(progressMatch[2], 10);
-
-            if (!isNaN(current) && !isNaN(total) && total > 0) {
-                taskInfo.progressCurrent = current;
-                taskInfo.progressTotal = total;
+        if (taskInfo.status === 'running') {
+            const progressMatch = details.match(/(\d+)\/(\d+)/);
+            if (progressMatch && progressMatch.length === 3) {
+                const current = parseInt(progressMatch[1], 10);
+                const total = parseInt(progressMatch[2], 10);
+                if (!isNaN(current) && !isNaN(total) && total > 0) {
+                    taskInfo.progressCurrent = current;
+                    taskInfo.progressTotal = total;
+                } else {
+                    taskInfo.progressCurrent = undefined;
+                    taskInfo.progressTotal = undefined;
+                }
             } else {
                 taskInfo.progressCurrent = undefined;
                 taskInfo.progressTotal = undefined;
             }
-        } else {
-            taskInfo.progressCurrent = undefined;
-            taskInfo.progressTotal = undefined;
         }
         saveTaskStoreToFile();
-    } else if (taskInfo && taskInfo.status !== 'running') {
-         // Allow updating details even if not running, e.g., setting final error message before setting status to failed/cancelled
-         taskInfo.details = details;
-         saveTaskStoreToFile();
     } else {
-        // Only log warning if taskInfo is truly missing
-        if (!taskInfo) {
-           console.error(`[WARN] Attempted to update details for unknown task ID: ${taskId}`);
-        }
+        console.error(`[WARN] Attempted to update details for unknown task ID: ${taskId}`);
     }
 }
 
 /**
  * Updates only the current stage of a task.
  */
-export function setTaskStage(taskId: string, stage: string | undefined): void {
+export function setTaskStage(taskId: string, stage: TaskStageValue): void {
   const taskInfo = taskStore.get(taskId);
   if (taskInfo) {
     // Only update if the stage is actually changing to avoid unnecessary saves
+    // Allow setting to undefined
     if (taskInfo.currentStage !== stage) {
         taskInfo.currentStage = stage;
-        console.error(`[INFO] Updated task ${taskId} stage to: ${stage}`);
+        console.error(`[INFO] Updated task ${taskId} stage to: ${stage ?? 'undefined'}`);
         saveTaskStoreToFile(); // Save changes
     }
   } else {

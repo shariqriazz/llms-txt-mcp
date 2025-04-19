@@ -1,112 +1,153 @@
 import { BaseHandler } from './base-handler.js';
 import { McpToolResponse } from '../types.js';
-import { getAllTasks, TaskInfo, TaskStatusValue } from '../../tasks.js';
+import { getAllTasks, TaskInfo, TaskStatusValue, TaskStageValue } from '../../tasks.js'; // Import TaskStageValue
+
+// Helper function to format milliseconds into a human-readable string
+function formatElapsedTime(ms: number): string {
+    if (ms < 0) ms = 0;
+    const seconds = Math.floor(ms / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
+    const days = Math.floor(hours / 24);
+
+    const s = seconds % 60;
+    const m = minutes % 60;
+    const h = hours % 24;
+    const d = days;
+
+    let parts: string[] = [];
+    if (d > 0) parts.push(`${d}d`);
+    if (h > 0) parts.push(`${h}h`);
+    if (m > 0) parts.push(`${m}m`);
+    if (s > 0 || parts.length === 0) parts.push(`${s}s`);
+
+    return parts.join(' ');
+}
+
+interface RunningTaskInfo {
+    stage: TaskStageValue;
+    progressStr: string;
+    description: string;
+    elapsed: string;
+}
 
 interface ProgressSummary {
     total: number;
     completed: number;
-    running: number;
+    running: number; // Count of tasks with status 'running'
     queued: number;
     failed: number;
     cancelled: number;
-    // Store details for the single running get-llms-full task, if any
-    runningStage?: 'Discovery' | 'Fetch' | 'Synthesize' | 'Embed' | 'Cleanup' | 'Unknown'; // Added new stages
-    runningTaskProgressCurrent?: number;
-    runningTaskProgressTotal?: number;
+    runningTaskDetails: RunningTaskInfo[]; // Store structured info
 }
 
 export class CheckProgressHandler extends BaseHandler {
     async handle(args: any): Promise<McpToolResponse> {
         const allTasks = getAllTasks();
-        const summary: Record<string, ProgressSummary> = {
-            // Only initialize summaries for task types we expect to report
-            'get-llms-full': { total: 0, completed: 0, running: 0, queued: 0, failed: 0, cancelled: 0 },
-            unknown: { total: 0, completed: 0, running: 0, queued: 0, failed: 0, cancelled: 0 } // Catch-all
+        const summary: ProgressSummary = {
+            total: 0, completed: 0, running: 0, queued: 0, failed: 0, cancelled: 0,
+            runningTaskDetails: []
         };
 
         for (const [taskId, taskInfo] of allTasks.entries()) {
-            let taskType = 'unknown'; // Default to unknown
-            if (taskId.startsWith('get-llms-full-')) {
-                taskType = 'get-llms-full'; // Only specifically identify the unified task type
+            if (!taskId.startsWith('get-llms-full-')) {
+                continue;
             }
 
-            // Ensure the summary object exists for the determined type (handles potential future types)
-            if (!summary[taskType]) {
-                summary[taskType] = { total: 0, completed: 0, running: 0, queued: 0, failed: 0, cancelled: 0 };
-            }
-
-            const typeSummary = summary[taskType];
-            typeSummary.total++;
+            summary.total++;
 
             switch (taskInfo.status) {
-                case 'completed': typeSummary.completed++; break;
+                case 'completed': summary.completed++; break;
+                case 'queued': summary.queued++; break;
+                case 'failed': summary.failed++; break;
+                case 'cancelled': summary.cancelled++; break;
                 case 'running':
-                    typeSummary.running++;
-                    // For get-llms-full, store the single running task's stage and progress
-                    if (taskType === 'get-llms-full') {
-                        typeSummary.runningTaskProgressCurrent = taskInfo.progressCurrent;
-                        typeSummary.runningTaskProgressTotal = taskInfo.progressTotal;
-                        // Prioritize the dedicated stage field
-                        if (taskInfo.currentStage) {
-                             // Map the stored stage name directly (ensure casing matches enum/expected values)
-                             const stageName = taskInfo.currentStage.charAt(0).toUpperCase() + taskInfo.currentStage.slice(1);
-                             typeSummary.runningStage = stageName as ('Discovery' | 'Fetch' | 'Synthesize' | 'Embed' | 'Cleanup');
-                        } else {
-                            // Fallback to parsing details if currentStage is not set (should be rare)
-                            typeSummary.runningStage = 'Unknown'; // Default
-                            const detailsLower = taskInfo.details.toLowerCase();
-                            if (detailsLower.includes('discovery stage:')) { typeSummary.runningStage = 'Discovery'; }
-                            else if (detailsLower.includes('fetch stage:')) { typeSummary.runningStage = 'Fetch'; }
-                            else if (detailsLower.includes('synthesize stage:')) { typeSummary.runningStage = 'Synthesize'; }
-                            else if (detailsLower.includes('embed stage:') || detailsLower.includes('embedding stage:')) { typeSummary.runningStage = 'Embed'; }
-                            else if (detailsLower.includes('cleanup stage:')) { typeSummary.runningStage = 'Cleanup'; }
-                        }
+                    summary.running++; // Increment total running count
+
+                    let stage: TaskStageValue = undefined;
+                    let progressStr = '';
+                    let description = taskInfo.description || 'Unknown Topic';
+                    let isActiveInStage = false; // Flag to check if actively processing vs waiting
+
+                    // --- Determine Stage (Prioritize currentStage) ---
+                    if (taskInfo.currentStage && taskInfo.currentStage !== 'QUEUED') {
+                        stage = taskInfo.currentStage;
+                    } else {
+                        // Fallback parsing details (less reliable)
+                        const detailsLower = taskInfo.details.toLowerCase();
+                        if (detailsLower.includes('discovery stage:')) { stage = 'Discovery'; }
+                        else if (detailsLower.includes('fetch stage:')) { stage = 'Fetch'; }
+                        else if (detailsLower.includes('synthesize stage:')) { stage = 'Synthesize'; }
+                        else if (detailsLower.includes('embed stage:') || detailsLower.includes('embedding stage:')) { stage = 'Embed'; }
+                        else if (detailsLower.includes('cleanup stage:')) { stage = 'Cleanup'; }
                     }
-                    break;
-                case 'queued': typeSummary.queued++; break;
-                case 'failed': typeSummary.failed++; break;
-                case 'cancelled': typeSummary.cancelled++; break;
+
+                    // --- Determine Progress ---
+                    if (taskInfo.progressCurrent !== undefined && taskInfo.progressTotal !== undefined && taskInfo.progressTotal > 0) {
+                        progressStr = ` [${taskInfo.progressCurrent}/${taskInfo.progressTotal}]`;
+                        // Assume if progress is being updated, it's active in the stage
+                        isActiveInStage = true;
+                    }
+
+                    // --- Check if actively processing based on details ---
+                    // This helps differentiate between "running" status but "waiting" for next stage lock
+                    if (!isActiveInStage && taskInfo.details) {
+                         const detailsLower = taskInfo.details.toLowerCase();
+                         // Check for messages indicating active processing within a stage
+                         if (detailsLower.includes('processing') ||
+                             detailsLower.includes('summarized') ||
+                             detailsLower.includes('upserting batch') ||
+                             detailsLower.includes('fetching content') ||
+                             detailsLower.includes('crawling website') ||
+                             detailsLower.includes('scanning directory') ||
+                             detailsLower.includes('generating embeddings'))
+                         {
+                             isActiveInStage = true;
+                         }
+                         // If details contain JSON result from *previous* stage, it's likely waiting
+                         if (detailsLower.startsWith('{') && detailsLower.includes('"stage":')) {
+                             isActiveInStage = false;
+                         }
+                    }
+
+                    // Only add to the detailed running list if it seems actively processing a stage
+                    if (isActiveInStage && stage) {
+                        const elapsedMs = Date.now() - taskInfo.startTime;
+                        const formattedElapsed = formatElapsedTime(elapsedMs);
+                        summary.runningTaskDetails.push({
+                            stage: stage,
+                            progressStr: progressStr,
+                            description: description,
+                            elapsed: formattedElapsed
+                        });
+                    }
+                    break; // End of 'running' case
             }
         }
 
-        let report = "";
-        for (const type in summary) {
-            // Skip empty categories unless it's 'unknown' and has tasks
-            if (summary[type].total === 0 && type !== 'unknown') continue;
-            if (type === 'unknown' && summary[type].total === 0) continue;
+        // --- Report Generation ---
+        let report = "Get-Llms-Full Tasks:\n";
+        report += `- Total: ${summary.total}\n`;
+        report += `- Completed: ${summary.completed}\n`;
+        report += `- Queued: ${summary.queued}\n`;
+        if (summary.failed > 0) report += `- Failed: ${summary.failed}\n`;
+        if (summary.cancelled > 0) report += `- Cancelled: ${summary.cancelled}\n`;
+        report += `- Running (Overall): ${summary.running}\n`; // Show total tasks with 'running' status
 
-
-            const s = summary[type];
-            let runningText = `- Running: ${s.running}`;
-            if (s.running > 0) {
-                // Add stage and progress details specifically for get-llms-full
-                if (type === 'get-llms-full' && s.runningStage) {
-                    let stageDetail = s.runningStage;
-                    if (s.runningTaskProgressCurrent !== undefined && s.runningTaskProgressTotal !== undefined && s.runningTaskProgressTotal > 0) {
-                        stageDetail += ` [${s.runningTaskProgressCurrent}/${s.runningTaskProgressTotal}]`;
-                    }
-                    runningText += ` (${stageDetail})`;
-                }
-                // Add a generic progress indicator for 'unknown' tasks if applicable (optional)
-                // else if (type === 'unknown' && s.runningProgressTotal > 0) {
-                //     runningText += ` (Progress: ${s.runningProgressCurrent}/${s.runningProgressTotal})`;
-                // }
-            }
-
-            // Format type name nicely (e.g., "Get-llms-full")
-            const formattedTypeName = type.split('-').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join('-');
-            report += `${formattedTypeName} Tasks:\n`;
-            report += `- Total: ${s.total}\n`;
-            report += `- Completed: ${s.completed}\n`;
-            report += `${runningText}\n`;
-            report += `- Queued: ${s.queued}\n`;
-            if (s.failed > 0) report += `- Failed: ${s.failed}\n`;
-            if (s.cancelled > 0) report += `- Cancelled: ${s.cancelled}\n`;
-            report += "\n";
+        if (summary.runningTaskDetails.length > 0) {
+            report += `\nActively Processing (${summary.runningTaskDetails.length}):\n`;
+            // Sort? Optional
+            // summary.runningTaskDetails.sort((a, b) => (a.description || '').localeCompare(b.description || ''));
+            report += summary.runningTaskDetails.map(
+                r => `- ${r.stage}${r.progressStr} (${r.description}) - Elapsed: ${r.elapsed}`
+            ).join('\n');
+        } else if (summary.running > 0) {
+             report += `(Tasks are running but may be waiting between stages)`;
         }
 
-        if (report === "") {
-            report = "No tasks found in the store.";
+
+        if (summary.total === 0) {
+            report = "No get-llms-full tasks found in the store.";
         }
 
         return {

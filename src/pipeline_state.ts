@@ -8,9 +8,11 @@ export const pipelineEmitter = new EventEmitter();
 // --- Tool-Specific Locks ---
 let isCrawlToolBusy: boolean = false;    // Lock for the 'crawl' tool
 let isSynthesizeLlmsFullToolBusy: boolean = false; // Renamed lock for the 'synthesize-llms-full' tool
-let isEmbedToolBusy: boolean = false;    // Lock for the 'embed' tool
+let isEmbedToolBusy: boolean = false;    // Lock for the 'embed' tool (Keep for now, might be redundant with Embedding Lock)
 
-// --- Resource Locks ---
+// --- Resource / Stage Locks ---
+let isBrowserActivityBusy: boolean = false; // Lock for Discovery/Fetch stages (using browser)
+let isSynthesizeBusy: boolean = false;      // Lock for Synthesize stage (CPU/LLM intensive)
 // isBrowserBusy removed, managed by ApiClient page pool
 
 // --- Legacy Locks (Potentially remove later) ---
@@ -61,6 +63,27 @@ export function releaseEmbedToolLock(): void {
     triggerNextPipelineSteps(); // Check queues after releasing lock
 }
 
+// --- New Lock Management ---
+
+// Browser Activity Lock (Discovery/Fetch)
+export function isBrowserActivityFree(): boolean { return !isBrowserActivityBusy; }
+export function acquireBrowserActivityLock(): boolean {
+    if (!isBrowserActivityBusy) { isBrowserActivityBusy = true; return true; } return false;
+}
+export function releaseBrowserActivityLock(): void {
+    isBrowserActivityBusy = false;
+    triggerNextPipelineSteps();
+}
+
+// Synthesize Lock
+export function isSynthesizeFree(): boolean { return !isSynthesizeBusy; }
+export function acquireSynthesizeLock(): boolean {
+    if (!isSynthesizeBusy) { isSynthesizeBusy = true; return true; } return false;
+}
+export function releaseSynthesizeLock(): void {
+    isSynthesizeBusy = false;
+    triggerNextPipelineSteps();
+}
 
 // --- Legacy Lock Management (Potentially remove later) ---
 
