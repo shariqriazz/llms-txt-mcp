@@ -128,9 +128,9 @@ export class GetLlmsFullHandler extends BaseHandler {
 
   private _runSchedulerCycle(): void {
       this.safeLog?.('debug', `Scheduler Cycle: Checking ${activeTasks.size} active tasks.`);
-      let browserTaskStarted = false;
-      let synthesizeTaskStarted = false;
-      let embedTaskStarted = false;
+      let browserLockAcquiredThisCycle = false; // Track if lock was acquired in this cycle
+      let synthesizeLockAcquiredThisCycle = false;
+      let embedLockAcquiredThisCycle = false;
 
       for (const [taskId, task] of activeTasks.entries()) {
           if (task.stage.startsWith('RUNNING_') || task.stage === 'COMPLETED' || task.stage === 'FAILED' || task.stage === 'CANCELLED') {
@@ -142,70 +142,70 @@ export class GetLlmsFullHandler extends BaseHandler {
           }
 
           // --- Check for starting Discovery/Fetch (Browser Activity Lock) ---
-          if (!browserTaskStarted && (task.stage === 'WAITING_DISCOVERY' || task.stage === 'WAITING_FETCH')) {
+          if (!browserLockAcquiredThisCycle && (task.stage === 'WAITING_DISCOVERY' || task.stage === 'WAITING_FETCH')) {
               if (PipelineState.isBrowserActivityFree()) {
                   if (PipelineState.acquireBrowserActivityLock()) {
                       this.safeLog?.('info', `[${taskId}] Scheduler: Acquiring BrowserActivityLock and starting ${task.stage === 'WAITING_DISCOVERY' ? 'Discovery' : 'Fetch'}.`);
-                      browserTaskStarted = true;
+                      browserLockAcquiredThisCycle = true; // Mark lock as acquired for this cycle
                       setTaskStatus(taskId, 'running');
                       if (task.stage === 'WAITING_DISCOVERY') {
                           task.stage = 'RUNNING_DISCOVERY';
-                          setTaskStage(taskId, 'Discovery'); // Update public stage
+                          setTaskStage(taskId, 'Discovery');
                           this._executeDiscoveryStage(taskId, task.request)
                               .then(result => this._handleStageCompletion(taskId, 'discovery', result))
                               .catch(error => this._handleStageError(taskId, 'discovery', error))
                               .finally(() => { PipelineState.releaseBrowserActivityLock(); this._triggerScheduler(); });
                       } else { // WAITING_FETCH
                           task.stage = 'RUNNING_FETCH';
-                          setTaskStage(taskId, 'Fetch'); // Update public stage
+                          setTaskStage(taskId, 'Fetch');
                           this._executeFetchStage(taskId, task.request, task.discoveryResult!)
                               .then(result => this._handleStageCompletion(taskId, 'fetch', result))
                               .catch(error => this._handleStageError(taskId, 'fetch', error))
                               .finally(() => { PipelineState.releaseBrowserActivityLock(); this._triggerScheduler(); });
                       }
                   } else { this.safeLog?.('debug', `[${taskId}] Scheduler: Failed to acquire BrowserActivityLock (race condition?).`); }
-              } else { this.safeLog?.('debug', `[${taskId}] Scheduler: BrowserActivityLock busy, cannot start Discovery/Fetch.`); break; }
+              } else { this.safeLog?.('debug', `[${taskId}] Scheduler: BrowserActivityLock busy.`); /* Don't break, check other tasks */ }
           }
 
           // --- Check for starting Synthesize (Synthesize Lock) ---
-          else if (!synthesizeTaskStarted && task.stage === 'WAITING_SYNTHESIZE') {
+          else if (!synthesizeLockAcquiredThisCycle && task.stage === 'WAITING_SYNTHESIZE') {
               if (PipelineState.isSynthesizeFree()) {
                   if (PipelineState.acquireSynthesizeLock()) {
                       this.safeLog?.('info', `[${taskId}] Scheduler: Acquiring SynthesizeLock and starting Synthesize.`);
-                      synthesizeTaskStarted = true;
+                      synthesizeLockAcquiredThisCycle = true;
                       setTaskStatus(taskId, 'running');
                       task.stage = 'RUNNING_SYNTHESIZE';
-                      setTaskStage(taskId, 'Synthesize'); // Update public stage
+                      setTaskStage(taskId, 'Synthesize');
                       this._executeSynthesizeStage(taskId, task.request, task.fetchResult!)
                           .then(result => this._handleStageCompletion(taskId, 'synthesize', result))
                           .catch(error => this._handleStageError(taskId, 'synthesize', error))
                           .finally(() => { PipelineState.releaseSynthesizeLock(); this._triggerScheduler(); });
                   } else { this.safeLog?.('debug', `[${taskId}] Scheduler: Failed to acquire SynthesizeLock (race condition?).`); }
-              } else { this.safeLog?.('debug', `[${taskId}] Scheduler: SynthesizeLock busy, cannot start Synthesize.`); break; }
+              } else { this.safeLog?.('debug', `[${taskId}] Scheduler: SynthesizeLock busy.`); /* Don't break */ }
           }
 
           // --- Check for starting Embed (Embedding Lock) ---
-          else if (!embedTaskStarted && task.stage === 'WAITING_EMBED') {
+          else if (!embedLockAcquiredThisCycle && task.stage === 'WAITING_EMBED') {
               if (PipelineState.isEmbeddingStageFree()) {
                   if (PipelineState.acquireEmbeddingLock()) {
                       this.safeLog?.('info', `[${taskId}] Scheduler: Acquiring EmbeddingLock and starting Embed.`);
-                      embedTaskStarted = true;
+                      embedLockAcquiredThisCycle = true;
                       setTaskStatus(taskId, 'running');
                       task.stage = 'RUNNING_EMBED';
-                      setTaskStage(taskId, 'Embed'); // Update public stage
+                      setTaskStage(taskId, 'Embed');
                       this._executeEmbedStage(taskId, task.synthesizeResult!)
                           .then(() => this._handleStageCompletion(taskId, 'embed', null))
                           .catch(error => this._handleStageError(taskId, 'embed', error))
                           .finally(() => { PipelineState.releaseEmbeddingLock(); this._triggerScheduler(); });
                   } else { this.safeLog?.('debug', `[${taskId}] Scheduler: Failed to acquire EmbeddingLock (race condition?).`); }
-              } else { this.safeLog?.('debug', `[${taskId}] Scheduler: EmbeddingLock busy, cannot start Embed.`); break; }
+              } else { this.safeLog?.('debug', `[${taskId}] Scheduler: EmbeddingLock busy.`); /* Don't break */ }
           }
 
            // --- Check for starting Cleanup ---
            else if (task.stage === 'WAITING_CLEANUP') {
                this.safeLog?.('info', `[${taskId}] Scheduler: Starting Cleanup.`);
                task.stage = 'RUNNING_CLEANUP';
-               setTaskStage(taskId, 'Cleanup'); // Update public stage
+               setTaskStage(taskId, 'Cleanup');
                this._executeCleanupStage(taskId, task.discoveryResult ?? null, task.fetchResult ?? null, task.synthesizeResult ?? null)
                    .then(() => this._handleStageCompletion(taskId, 'cleanup', null))
                    .catch(error => this._handleStageError(taskId, 'cleanup', error))
@@ -219,15 +219,24 @@ export class GetLlmsFullHandler extends BaseHandler {
 
   // Helper to get the public-facing stage name from the internal state
   private _getPublicStageName(internalStage: InternalTaskStage): TaskStageValue {
+      let baseName: string | undefined;
       if (internalStage.startsWith('WAITING_') || internalStage.startsWith('RUNNING_')) {
-          const baseName = internalStage.substring(internalStage.indexOf('_') + 1);
-          // Ensure the extracted name is a valid TaskStageValue
-          const validStages: TaskStageValue[] = ['Discovery', 'Fetch', 'Synthesize', 'Embed', 'Cleanup'];
-          if (validStages.includes(baseName as TaskStageValue)) {
-              return baseName as TaskStageValue;
-          }
+          baseName = internalStage.substring(internalStage.indexOf('_') + 1);
+      } else if (internalStage === 'QUEUED') {
+          return 'QUEUED';
+      } else {
+          return undefined; // Covers COMPLETED, FAILED, CANCELLED, or unexpected values
       }
-      return internalStage === 'QUEUED' ? 'QUEUED' : undefined;
+
+      // Check if baseName is a valid public stage name
+      const validPublicStages: ReadonlyArray<Exclude<TaskStageValue, 'QUEUED' | undefined>> = ['Discovery', 'Fetch', 'Synthesize', 'Embed', 'Cleanup'];
+      // Use 'as any' for includes check, but the explicit check makes the return type safe
+      if (validPublicStages.includes(baseName as any)) {
+          // Ensure Title Case
+          return (baseName.charAt(0).toUpperCase() + baseName.slice(1).toLowerCase()) as Exclude<TaskStageValue, 'QUEUED' | undefined>;
+      }
+
+      return undefined; // Fallback if baseName is not valid
   }
 
 
