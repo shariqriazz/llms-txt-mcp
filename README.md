@@ -62,10 +62,18 @@ This server provides the following tools:
 *   [Node.js](https://nodejs.org/) (v20 or higher recommended)
 *   An MCP-compatible client (e.g., Cline, Cursor, Claude Desktop)
 *   API Keys / Service Access for the components you intend to use (see Configuration).
+*   **Qdrant Instance:** A running Qdrant vector database instance accessible by the server. You can run it locally using Docker:
+    ```bash
+    # Example running Qdrant with Docker and setting an API key
+    docker run -d -p 6333:6333 \
+        -e QDRANT__SERVICE__API_KEY=your_secret_api_key_here \
+        qdrant/qdrant
+    ```
+    *Remember to set the `QDRANT_URL` and `QDRANT_API_KEY` environment variables for the MCP server accordingly.*
 
 ## Installation & Running
 
-### Option 1: Using NPX (Recommended for Clients)
+### Option 1: Using NPX (Recommended for Simple Client Integration)
 
 You can run the server directly using `npx` within your MCP client configuration. This ensures you're using the latest published version.
 
@@ -75,11 +83,11 @@ You can run the server directly using `npx` within your MCP client configuration
 npx -y llms-full-mcp-server
 ```
 
-### Option 2: Manual Installation (for Development)
+### Option 2: Manual Installation (for Development or Background Service)
 
 1.  Clone the repository:
     ```bash
-    git clone <repository-url>
+    git clone https://github.com/shariqriazz/llms-txt-mcp.git
     cd llms-full-mcp-new # Or your local directory name
     ```
 2.  Install dependencies (using Bun is recommended):
@@ -94,11 +102,25 @@ npx -y llms-full-mcp-server
     ```bash
     bun run build # Or npm run build
     ```
-4.  Run the server:
-    ```bash
-    bun start # Or npm start
-    ```
-    Or for development with auto-rebuild (using npm scripts):
+4.  Run the server (choose one):
+    *   **Foreground (Stdio):** For direct client integration or testing.
+        ```bash
+        bun start # Or npm start
+        ```
+    *   **Foreground (SSE):** For testing the SSE transport.
+        ```bash
+        MCP_TRANSPORT=sse MCP_PORT=3000 node build/index.js
+        ```
+    *   **Background (SSE - Recommended for Persistent Tasks):** Use a process manager like `pm2` or run in the background.
+        ```bash
+        # Example using pm2 (install with: npm install -g pm2)
+        # Ensure required env vars (API keys, QDRANT_URL etc.) are set in your environment or use pm2 ecosystem file
+        MCP_TRANSPORT=sse MCP_PORT=3000 pm2 start build/index.js --name llms-full-mcp
+
+        # Example using basic backgrounding (less robust)
+        MCP_TRANSPORT=sse MCP_PORT=3000 node build/index.js &
+        ```
+    *   **Development (Stdio with Auto-Rebuild):**
     ```bash
     npm run dev
     ```
@@ -108,6 +130,13 @@ npx -y llms-full-mcp-server
 ### Environment Variables
 
 Set these variables directly in your shell, using a `.env` file in the server's directory (if running manually), or within the MCP client's configuration interface. **Only set keys for services you intend to use.**
+
+*   **Tavily (for Web Search & Crawl Discovery):**
+
+*   **MCP Server Transport:**
+    *   `MCP_TRANSPORT`: (Optional) Set to `sse` to enable Server-Sent Events transport over HTTP. Defaults to `stdio`.
+    *   `MCP_PORT`: (Optional) Port number for SSE transport. Defaults to `3000`.
+    *   `MCP_HOST`: (Optional) Hostname for SSE transport. Defaults to `localhost`.
 
 *   **Tavily (for Web Search & Crawl Discovery):**
     *   `TAVILY_API_KEY`: Your Tavily API key. **Required** for `tavily_search`, `tavily_extract`, and topic discovery in `get_llms_full`.
@@ -148,47 +177,70 @@ Set these variables directly in your shell, using a `.env` file in the server's 
 
 ### MCP Client Configuration (Example)
 
-Add/modify the entry in your client's MCP configuration file:
+Add/modify the entry in your client's MCP configuration file (e.g., `settings.json` for Cline/Cursor).
+
+**Option A: Stdio Transport (Server launched by client)**
 
 ```json
 {
   "mcpServers": {
     "llms-full-mcp": { // Internal server name
       "command": "node", // Or "npx"
-      "args": ["/Users/shariqriaz/projects/llms-full-mcp-new/build/index.js"], // Or ["-y", "llms-full-mcp-server"]
+      "args": ["./build/index.js"], // Relative path example
       "env": {
-        // --- Required ---
-        "QDRANT_URL": "http://141.147.116.40:6333",
-        "EMBEDDING_PROVIDER": "ollama", // Choose: openai, ollama, google
-        // --- Required based on choices above ---
-        "TAVILY_API_KEY": "YOUR_TAVILY_KEY", // Needed for crawl discovery
-        "GEMINI_API_KEY": "YOUR_GEMINI_KEY", // Needed if LLM/Embedding provider is google
-        "OLLAMA_MODEL": "nomic-embed-text", // Needed if Embedding provider is ollama
-        // "OPENAI_API_KEY": "YOUR_OPENAI_KEY", // Needed if Embedding provider is openai
-        // --- Optional ---
-        "PIPELINE_LLM_PROVIDER": "gemini", // Default: gemini (options: ollama, openrouter, chutes)
-        "PIPELINE_LLM_MODEL": "gemini-2.0-flash", // Default depends on PIPELINE_LLM_PROVIDER
-        "SYNTHESIZE_LLM_PROVIDER": "gemini", // Default: gemini (options: ollama, openrouter, chutes)
-        "SYNTHESIZE_LLM_MODEL": "gemini-2.0-flash", // Default depends on SYNTHESIZE_LLM_PROVIDER
-        // "OLLAMA_BASE_URL": "http://localhost:11434",
-        // "OPENROUTER_API_KEY": "YOUR_OPENROUTER_KEY", // Needed if *any* LLM provider is openrouter
-        // "CHUTES_API_KEY": "YOUR_CHUTES_KEY", // Needed if *any* LLM provider is chutes
-        // "OPENROUTER_BASE_URL": "https://openrouter.ai/api/v1",
-        // "CHUTES_BASE_URL": "https://llm.chutes.ai/v1",
-        // "QDRANT_API_KEY": "YOUR_QDRANT_KEY",
-        // "OPENAI_BASE_URL": "https://api.together.xyz/v1",
-        // "EMBEDDING_MODEL": "models/embedding-001", // Default depends on EMBEDDING_PROVIDER
-        // "GEMINI_FALLBACK_MODEL": "text-embedding-004",
-        "BROWSER_POOL_SIZE": "10", // Example: Allow up to 10 concurrent browser pages (Default is 5)
-        "LLM_CONCURRENCY": "10", // Example: Allow up to 10 concurrent LLM calls (Default is 3)
-        "QDRANT_BATCH_SIZE": "100" // Example: Use default batch size
+        // Environment variables are passed by the client to the server process
+        "QDRANT_URL": "http://localhost:6333", // Example
+        "EMBEDDING_PROVIDER": "ollama", // Example
+        "OLLAMA_MODEL": "nomic-embed-text", // Example
+        "TAVILY_API_KEY": "YOUR_TAVILY_KEY", // Example
+        "GEMINI_API_KEY": "YOUR_GEMINI_KEY", // Example
+        "PIPELINE_LLM_PROVIDER": "gemini", // Example
+        "..." : "..." // Add other required/optional vars
       }
     }
   }
 }
 ```
 
-**Important:** Replace placeholders, set required keys based on your provider choices, and ensure `command`/`args` are correct. Restart your MCP client after changes.
+**Option B: SSE Transport (Server running independently)**
+
+*First, ensure the server is running in the background with `MCP_TRANSPORT=sse` and the necessary API keys/config set in its environment.*
+
+```json
+{
+  "mcpServers": {
+    "llms-full-mcp": {
+      "type": "sse",
+      "url": "http://localhost:3000",
+      "alwaysAllow": [
+        "tavily_search",
+        "tavily_extract",
+        "llms_full_vector_store_list_sources",
+        "llms_full_vector_store_remove_source",
+        "llms_full_vector_store_reset",
+        "llms_full_vector_store_list_categories",
+        "llms_full_vector_store_search",
+        "llms_full_util_extract_urls",
+        "llms_full_cancel_task",
+        "llms_full_get_task_status",
+        "llms_full_get_task_details",
+        "llms_full_check_progress",
+        "llms_full_synthesize_answer_from_docs",
+        "get_llms_full",
+        "llms_full_restart_task",
+        "llms_full_cleanup_task_store"
+      ],
+      "timeout": 3600,
+      "disabled": false
+    }
+  }
+}
+```
+
+**Important:**
+*   For Stdio: Replace placeholders in `env`, set required keys based on your provider choices, and ensure `command`/`args` are correct.
+*   For SSE: Ensure the server is running independently with the correct environment variables set *before* configuring the client.
+*   Restart your MCP client after making changes to its configuration.
 
 ## Usage Examples
 

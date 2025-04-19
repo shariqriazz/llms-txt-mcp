@@ -51,7 +51,7 @@ const FETCH_OUTPUT_DIR = path.join(BASE_DATA_DIR, 'fetch_output');
 const SYNTHESIZE_OUTPUT_DIR = path.join(BASE_DATA_DIR, 'synthesize_output');
 const QDRANT_COLLECTION_NAME = 'documentation';
 const BROWSER_POOL_SIZE = Math.min(Math.max(1, parseInt(process.env.BROWSER_POOL_SIZE || '5', 10) || 5), 50);
-const QDRANT_BATCH_SIZE = Math.max(1, parseInt(process.env.QDRANT_BATCH_SIZE || '100', 10) || 100);
+// const QDRANT_BATCH_SIZE = Math.max(1, parseInt(process.env.QDRANT_BATCH_SIZE || '100', 10) || 100); // Read inside _executeEmbedStage
 
 // --- State Management for Concurrent Scheduler ---
 // Internal state representation for the scheduler
@@ -438,12 +438,15 @@ export class GetLlmsFullHandler extends BaseHandler {
                 const points: QdrantPoint[] = await generateQdrantPoints(chunks, summaryFilePath, category, this.apiClient, this.safeLog, mainTaskId);
                 if (isTaskCancelled(mainTaskId)) throw new McpError(ErrorCode.InternalError, `Task ${mainTaskId} cancelled.`);
                 if (points.length > 0) {
-                    updateTaskDetails(mainTaskId, `Embed Stage: Embedding complete. Upserting ${points.length} points to Qdrant in batches of ${QDRANT_BATCH_SIZE}...`);
-                    for (let i = 0; i < points.length; i += QDRANT_BATCH_SIZE) {
+                    // Read QDRANT_BATCH_SIZE here
+                    const qdrantBatchSize = Math.max(1, parseInt(process.env.QDRANT_BATCH_SIZE || '100', 10) || 100);
+                    this.safeLog?.('debug', `[${mainTaskId}] Embed Stage Batch Size: ${qdrantBatchSize}`);
+                    updateTaskDetails(mainTaskId, `Embed Stage: Embedding complete. Upserting ${points.length} points to Qdrant in batches of ${qdrantBatchSize}...`);
+                    for (let i = 0; i < points.length; i += qdrantBatchSize) {
                         if (isTaskCancelled(mainTaskId)) throw new McpError(ErrorCode.InternalError, `Task ${mainTaskId} cancelled during upsert batching.`);
-                        const batch = points.slice(i, i + QDRANT_BATCH_SIZE);
-                        const batchNum = Math.floor(i / QDRANT_BATCH_SIZE) + 1;
-                        const totalBatches = Math.ceil(points.length / QDRANT_BATCH_SIZE);
+                        const batch = points.slice(i, i + qdrantBatchSize);
+                        const batchNum = Math.floor(i / qdrantBatchSize) + 1;
+                        const totalBatches = Math.ceil(points.length / qdrantBatchSize);
                         updateTaskDetails(mainTaskId, `Embed Stage: Upserting batch ${batchNum}/${totalBatches} (${batch.length} points)...`);
                         await this.apiClient.qdrantClient.upsert(QDRANT_COLLECTION_NAME, { wait: true, points: batch });
                         this.safeLog?.('debug', `[${mainTaskId}] Upserted batch ${batchNum}/${totalBatches}`);

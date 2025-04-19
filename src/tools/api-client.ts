@@ -14,12 +14,12 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_FALLBACK_MODEL = process.env.GEMINI_FALLBACK_MODEL;
-const QDRANT_URL = process.env.QDRANT_URL || 'http://127.0.0.1:6333';
-const QDRANT_API_KEY = process.env.QDRANT_API_KEY;
-// Read Browser Pool Size, default to 5, min 1, max 50
-let parsedPoolSize = parseInt(process.env.BROWSER_POOL_SIZE || '5', 10);
-if (isNaN(parsedPoolSize)) parsedPoolSize = 5;
-const BROWSER_POOL_SIZE = Math.min(Math.max(1, parsedPoolSize), 50);
+// const QDRANT_URL = process.env.QDRANT_URL || 'http://127.0.0.1:6333'; // Read directly in constructor
+// const QDRANT_API_KEY = process.env.QDRANT_API_KEY; // Read directly in constructor
+// Read Browser Pool Size, default to 5, min 1, max 50 (Read directly in constructor)
+// let parsedPoolSize = parseInt(process.env.BROWSER_POOL_SIZE || '5', 10);
+// if (isNaN(parsedPoolSize)) parsedPoolSize = 5;
+// const BROWSER_POOL_SIZE = Math.min(Math.max(1, parsedPoolSize), 50);
 
 export class ApiClient {
   qdrantClient: QdrantClient;
@@ -29,9 +29,13 @@ export class ApiClient {
 
   constructor() {
     // Initialize Qdrant client
+    // Read directly from process.env inside constructor
+    const qdrantUrl = process.env.QDRANT_URL || 'http://127.0.0.1:6333';
+    const qdrantApiKey = process.env.QDRANT_API_KEY;
+    console.error(`[ApiClient Constructor] Initializing QdrantClient with URL: ${qdrantUrl}`);
     this.qdrantClient = new QdrantClient({
-      url: QDRANT_URL,
-      apiKey: QDRANT_API_KEY,
+      url: qdrantUrl,
+      apiKey: qdrantApiKey,
     });
 
     // Initialize EmbeddingService
@@ -51,8 +55,12 @@ export class ApiClient {
     }
 
     // Initialize browser limiter
-    console.error(`Initializing browser concurrency limit to: ${BROWSER_POOL_SIZE}`);
-    this.browserLimiter = pLimit(BROWSER_POOL_SIZE);
+    // Read and parse BROWSER_POOL_SIZE directly here
+    let parsedBrowserPoolSize = parseInt(process.env.BROWSER_POOL_SIZE || '5', 10);
+    if (isNaN(parsedBrowserPoolSize)) parsedBrowserPoolSize = 5;
+    const browserPoolSize = Math.min(Math.max(1, parsedBrowserPoolSize), 50);
+    console.error(`Initializing browser concurrency limit to: ${browserPoolSize}`);
+    this.browserLimiter = pLimit(browserPoolSize);
   }
 
   // Ensures the browser instance is launched, called internally by withPage
@@ -176,7 +184,8 @@ export class ApiClient {
                   size: vectorSize,
                   distance: 'Cosine',
               },
-              ...(QDRANT_API_KEY && {
+              // Read API key directly from process.env here as well
+              ...(process.env.QDRANT_API_KEY && {
                   optimizers_config: { default_segment_number: 2 },
                   replication_factor: 2,
               })
@@ -215,7 +224,9 @@ export class ApiClient {
               return;
           }
           if (error.message.includes('timed out') || error.message.includes('ECONNREFUSED')) {
-              message = `Connection to Qdrant (${QDRANT_URL}) failed during collection ${context}. Please check Qdrant status and URL.`;
+              // Use the URL read inside the constructor for error message consistency
+              const qdrantUrlForError = process.env.QDRANT_URL || 'http://127.0.0.1:6333';
+              message = `Connection to Qdrant (${qdrantUrlForError}) failed during collection ${context}. Please check Qdrant status and URL.`;
           } else if (error.message.includes('Unauthorized') || error.message.includes('Forbidden')) {
               message = `Authentication failed for Qdrant during collection ${context}. Please check QDRANT_API_KEY if using Qdrant Cloud.`;
               code = ErrorCode.InvalidRequest;

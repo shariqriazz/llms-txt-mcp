@@ -68,6 +68,7 @@ export function checkLlmsFullConfig(safeLog: LogFunction): void {
         isLlmsFullConfigured = false;
     } else {
         try {
+            safeLog('debug', `Attempting to initialize ApiClient with QDRANT_URL: ${process.env.QDRANT_URL}`); // Add log
             apiClient = new ApiClient();
             isLlmsFullConfigured = true;
              safeLog('info', 'llms-full ApiClient initialized.');

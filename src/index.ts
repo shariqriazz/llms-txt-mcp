@@ -1,7 +1,11 @@
 #!/usr/bin/env node
 
+import http from 'node:http'; // Import Node HTTP module
+import { URL } from 'node:url'; // Import URL for parsing
+
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js"; // Import SSE transport (Corrected casing)
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
@@ -13,6 +17,14 @@ import dotenv from "dotenv";
 
 // Load environment variables from .env file
 dotenv.config();
+
+// --- Transport Configuration ---
+const MCP_TRANSPORT = process.env.MCP_TRANSPORT?.toLowerCase() || 'stdio'; // Default to stdio
+const MCP_PORT = parseInt(process.env.MCP_PORT || '3000', 10); // Default port 3000 for SSE
+const MCP_HOST = process.env.MCP_HOST || 'localhost'; // Default host for SSE
+
+// Log transport settings for verification
+safeLog('debug', `MCP Transport Config: Transport=${MCP_TRANSPORT}, Host=${MCP_HOST}, Port=${MCP_PORT}`);
 
 // Import tool registration functions
 import { registerTavilyTools, checkTavilyConfig } from "./tools/providers/tavily.js";
@@ -55,32 +67,111 @@ function safeLog(
 const allTools: Tool[] = [];
 const toolHandlers: Map<string, (args: any) => Promise<any>> = new Map();
 
-// --- Request Handlers ---
+// --- Global HTTP Server and SSE Transport Store ---
+let httpServer: http.Server | null = null;
+let sseTransport: SSEServerTransport | null = null; // Assuming single client connection for simplicity
+const SSE_POST_ENDPOINT = '/mcp-message'; // Endpoint for receiving messages from client
+
+// --- Setup MCP Server Instance and Handlers (Run Once) ---
+// Populate tools and handlers arrays/maps
+registerTavilyTools(allTools, toolHandlers, safeLog);
+registerLlmsFullTools(allTools, toolHandlers, safeLog);
+
+// Setup request handlers on the main MCP Server instance
+setupRequestHandlers(server, allTools, toolHandlers, safeLog);
+
+safeLog('info', `MCP Server instance created with ${allTools.length} tools registered.`);
+
 
 // --- Server Startup ---
 async function runServer() {
   try {
-    const transport = new StdioServerTransport();
+    if (MCP_TRANSPORT === 'sse') {
+        // --- SSE Transport Logic ---
+        httpServer = http.createServer(async (req, res) => {
+            safeLog('debug', `HTTP Request Received: ${req.method} ${req.url}`); // Add logging
+            // Basic CORS handling
+            res.setHeader('Access-Control-Allow-Origin', '*'); // Adjust in production
+            res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+            res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization'); // Add other headers if needed
 
-    await server.connect(transport);
+            if (req.method === 'OPTIONS') {
+                res.writeHead(204); // No Content
+                res.end();
+                return;
+            }
 
-    // --- Tool Registration (Populate After Connection) ---
-    // Clear any previous state if runServer is called again (though unlikely here)
-    allTools.length = 0;
-    toolHandlers.clear();
+            if (req.method === 'GET' && req.url === '/') { // Endpoint to establish SSE connection
+                safeLog('info', 'SSE connection requested.');
+                if (sseTransport) {
+                    safeLog('warning', 'Existing SSE transport found, closing before creating new one.');
+                    await sseTransport.close(); // Close existing if any
+                }
 
-    // Populate tools and handlers
-    registerTavilyTools(allTools, toolHandlers, safeLog);
-    registerLlmsFullTools(allTools, toolHandlers, safeLog);
+                // Create transport *inside* the request handler
+                sseTransport = new SSEServerTransport(SSE_POST_ENDPOINT, res);
 
-    // --- Setup Request Handlers (After Connection & Tool Registration) ---
-    setupRequestHandlers(server, allTools, toolHandlers, safeLog);
+                sseTransport.onclose = () => {
+                    safeLog('info', 'SSE transport closed.');
+                    sseTransport = null; // Clear the reference
+                };
+                sseTransport.onerror = (error) => {
+                    safeLog('error', `SSE transport error: ${error.message}`);
+                    sseTransport = null;
+                };
 
+                try {
+                    // await sseTransport.start(); // Removed: connect() calls start() internally
+                    await server.connect(sseTransport); // Connect MCP Server logic
+                    safeLog('info', 'SSE transport started and connected to MCP Server.');
+                } catch (connectError: any) {
+                    safeLog('error', `Failed to start/connect SSE transport: ${connectError.message}`);
+                    res.writeHead(500);
+                    res.end('Failed to establish SSE connection.');
+                    sseTransport = null;
+                }
 
-    // Now that we're connected and handlers are set, log success
-    // Log initialization success via console.error as well
-    console.error(`llms-full MCP Server initialized successfully with ${allTools.length} tools.`);
-    console.error("llms-full MCP Server running on stdio.");
+            } else if (req.method === 'POST') {
+                // Parse URL to check pathname, ignoring query string
+                const requestUrl = new URL(req.url || '', `http://${req.headers.host}`);
+                if (requestUrl.pathname === SSE_POST_ENDPOINT || requestUrl.pathname === '/') {
+                    // Handle valid POST endpoint
+                    if (sseTransport) {
+                        await sseTransport.handlePostMessage(req, res);
+                    } else {
+                        safeLog('error', 'Received POST message but no active SSE transport.');
+                        res.writeHead(503); // Service Unavailable
+                        res.end('No active SSE connection.');
+                    }
+                } else {
+                    // Handle POST to unexpected path
+                    safeLog('warning', `Received POST request to unexpected path: ${requestUrl.pathname}`);
+                    res.writeHead(404);
+                    res.end('Not Found');
+                }
+            } else {
+                // Handle other methods (PUT, DELETE, etc.) or unexpected GET paths
+                safeLog('warning', `Unhandled HTTP request: ${req.method} ${req.url}`);
+                res.writeHead(404); // Or 405 Method Not Allowed
+                res.end('Not Found');
+            }
+        }); // End of httpServer.createServer callback
+
+        httpServer.listen(MCP_PORT, MCP_HOST, () => {
+            safeLog('info', `llms-full MCP Server (SSE) listening on http://${MCP_HOST}:${MCP_PORT}`);
+        });
+
+    } else {
+        // --- Stdio Transport Logic ---
+        safeLog('info', 'Configuring server for Stdio transport.');
+        const transport = new StdioServerTransport();
+        await server.connect(transport);
+        safeLog('info', 'Stdio transport connected to MCP Server.');
+        safeLog('info', 'llms-full MCP Server (Stdio) running.');
+    }
+
+    // Note: Tool registration and handler setup now happens *before* connect
+
   } catch (error) {
     console.error("Fatal error running server:", error);
   process.exit(1);
@@ -157,7 +248,11 @@ process.on('SIGINT', async () => {
       safeLog('info', 'Cleaning up API client resources (e.g., browser)...');
       await apiClient.cleanup();
   }
-  await server.close();
+    if (httpServer) {
+        safeLog('info', 'Closing HTTP server...');
+        httpServer.close();
+    }
+    await server.close();
   console.error('Server shut down gracefully.');
   process.exit(0);
 });
@@ -168,7 +263,11 @@ process.on('SIGTERM', async () => {
       safeLog('info', 'Cleaning up API client resources (e.g., browser)...');
       await apiClient.cleanup();
   }
-  await server.close();
+    if (httpServer) {
+        safeLog('info', 'Closing HTTP server...');
+        httpServer.close();
+    }
+    await server.close();
   console.error('Server shut down gracefully.');
   process.exit(0);
 });

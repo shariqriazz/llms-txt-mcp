@@ -69,12 +69,16 @@ export async function generateQdrantPoints(
         }
 
         try {
-            const embedding = await apiClient.getEmbeddings(chunk); // Use ApiClient's embedding service
+            // Sanitize chunk content to remove problematic characters for JSON
+            // More aggressive sanitization: Keep only known safe characters (alphanumeric, common symbols, basic whitespace)
+            // Replace any character NOT in the allowed set with an empty string.
+            const sanitizedChunk = chunk.replace(/[^a-zA-Z0-9 \t\n\r.,;:!?@#$%^&*()_+\-=[\]{}|'"<>/\`~]/g, '');
+            const embedding = await apiClient.getEmbeddings(sanitizedChunk); // Use sanitized chunk for embedding
             const pointId = uuidv5(`${sourceIdentifier}#${i}`, UUID_NAMESPACE);
             points.push({
                 id: pointId,
                 vector: embedding,
-                payload: { text: chunk, source: sourceIdentifier, chunk_index: i, category: category },
+                payload: { text: sanitizedChunk, source: sourceIdentifier, chunk_index: i, category: category }, // Use sanitized chunk in payload
             });
         } catch (error: any) {
             safeLog?.('error', `Failed to generate embedding for chunk ${i} from ${sourceIdentifier}: ${error.message}`);
