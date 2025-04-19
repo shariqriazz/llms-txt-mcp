@@ -39,7 +39,8 @@ async function saveTaskStoreToFile(): Promise<void> {
     try {
         // Ensure directory exists before writing
         await fs.mkdir(TASK_STORE_DIR, { recursive: true });
-        const dataToSave = JSON.stringify(Array.from(taskStore.entries()));
+        // Add indentation (2 spaces) to JSON.stringify for readability
+        const dataToSave = JSON.stringify(Array.from(taskStore.entries()), null, 2);
         await fs.writeFile(TASK_STORE_FILE, dataToSave, 'utf-8');
     } catch (error) {
         console.error(`[ERROR] Failed to save task store: ${error}`);
